@@ -76,7 +76,7 @@ impl Client<NoProvider> {
 
 impl<P: Provider> Client<P> {
     /// Create a new [`RequestHandler`] with no headers.
-    pub fn request<R: Handler<P>>(&self, request: R) -> RequestHandler<P, R> {
+    pub fn request<R: Handler<P>>(&self, request: R) -> RequestHandler<R, P> {
         RequestHandler::from_client(self, request)
     }
 }

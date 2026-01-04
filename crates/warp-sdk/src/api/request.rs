@@ -18,22 +18,6 @@ use http::HeaderMap;
 use crate::api::reply::Reply;
 use crate::api::{Body, Client, Provider};
 
-/// Request-scoped context passed to [`Handler::handle`].
-///
-/// Bundles common request inputs (owner, provider, headers) into a single
-/// parameter, making handler signatures more ergonomic and easier to extend.
-#[derive(Clone, Copy, Debug)]
-pub struct Context<'a, P: Provider> {
-    /// The owning tenant / namespace for the request.
-    pub owner: &'a str,
-
-    /// The provider implementation used to fulfill the request.
-    pub provider: &'a P,
-
-    /// Request headers (typed).
-    pub headers: &'a HeaderMap<String>,
-}
-
 /// Request handler.
 ///
 /// The primary role of this trait is to provide a common interface for
@@ -51,23 +35,46 @@ pub trait Handler<P: Provider> {
     ) -> impl Future<Output = Result<Reply<Self::Output>, Self::Error>> + Send;
 }
 
+/// Trait for messages that can be decoded and built into handlers
+pub trait Decodable: Sized {
+    type DecodeError;
+
+    /// Decode the message into a request handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the message cannot be decoded.
+    fn decode<P: Provider>(bytes: &[u8]) -> Result<RequestHandler<Self, P>, Self::DecodeError>
+    where
+        Self: Handler<P>;
+}
+
+/// Request-scoped context passed to [`Handler::handle`].
+///
+/// Bundles common request inputs (owner, provider, headers) into a single
+/// parameter, making handler signatures more ergonomic and easier to extend.
+#[derive(Clone, Copy, Debug)]
+pub struct Context<'a, P: Provider> {
+    /// The owning tenant / namespace for the request.
+    pub owner: &'a str,
+
+    /// The provider implementation used to fulfill the request.
+    pub provider: &'a P,
+
+    /// Request headers (typed).
+    pub headers: &'a HeaderMap<String>,
+}
+
 /// Request router.
 ///
 /// The router is used to route a request to the appropriate handler with the
 /// owner and headers set.
-///
-/// # Example Usage
-///
-/// ```rust,ignore
-/// let router = RequestHandler::new(client, body);
-/// let response = router.headers(headers).handle().await;
 /// ```
-#[must_use = "requests do nothing unless you `.await` them (or call `.handle().await`)"]
 #[derive(Debug)]
-pub struct RequestHandler<P, R>
+pub struct RequestHandler<R, P = NoProvider>
 where
-    P: Provider,
     R: Handler<P>,
+    P: Provider,
 {
     request: R,
     headers: HeaderMap<String>,
@@ -79,13 +86,15 @@ where
     provider: Arc<P>,
 }
 
-impl<P, R> RequestHandler<P, R>
+pub struct NoProvider;
+
+impl<R, P> RequestHandler<R, P>
 where
-    P: Provider,
     R: Handler<P>,
+    P: Provider,
 {
-    /// Create a new `RequestHandler` instance.
-    pub fn from_client(client: &Client<P>, request: R) -> Self {
+    // Internal constructor for creating a `RequestHandler` from a `Client`.
+    pub(crate) fn from_client(client: &Client<P>, request: R) -> Self {
         Self {
             request,
             headers: HeaderMap::default(),
@@ -95,13 +104,10 @@ where
     }
 
     /// Set request headers.
-    pub fn headers(self, headers: HeaderMap<String>) -> Self {
-        Self {
-            request: self.request,
-            headers,
-            owner: self.owner,
-            provider: self.provider,
-        }
+    #[must_use]
+    pub fn headers(mut self, headers: HeaderMap<String>) -> Self {
+        self.headers = headers;
+        self
     }
 
     /// Handle the request by routing it to the appropriate handler.
@@ -128,7 +134,7 @@ where
 
 // Implement [`IntoFuture`] so that the request can be awaited directly (without
 // needing to call the `handle` method).
-impl<P, R> IntoFuture for RequestHandler<P, R>
+impl<R, P> IntoFuture for RequestHandler<R, P>
 where
     P: Provider + 'static,
     R: Handler<P> + Send + 'static,

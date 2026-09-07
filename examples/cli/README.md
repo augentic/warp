@@ -1,7 +1,7 @@
 # CLI Command Example
 
 Demonstrates a `wasi:cli/command` guest: clap argv, `Client::call` on
-typed handlers, and `command::execute_wasi`.
+fn handlers, and `command::execute_wasi`.
 
 ## Quick Start
 

@@ -1,10 +1,13 @@
 //! Transport-neutral handler invocation and transport adapters.
 //!
-//! Application logic is a [`Handler`]: the input type implements the trait,
-//! [`Client`] owns the provider, and [`Context`] is what `handle` receives.
+//! Application logic is a [`Handler`]: any `async fn(I, Context<P>)`
+//! returning a `Result`. [`Client`] owns the provider and builds the
+//! [`Context`] each call receives.
 //!
 //! ```rust,ignore
-//! use omnia_guest::api::{Client, Context, Handler, Metadata};
+//! use std::convert::Infallible;
+//!
+//! use omnia_guest::api::{Client, Context, Metadata};
 //!
 //! struct Provider;
 //!
@@ -12,18 +15,13 @@
 //!     name: String,
 //! }
 //!
-//! impl Handler<Provider> for Greet {
-//!     type Output = String;
-//!     type Error = std::convert::Infallible;
-//!
-//!     async fn handle(self, context: Context<'_, Provider>) -> Result<Self::Output, Self::Error> {
-//!         Ok(format!("hello, {} from {}", self.name, context.owner))
-//!     }
+//! async fn greet(input: Greet, context: Context<Provider>) -> Result<String, Infallible> {
+//!     Ok(format!("hello, {} from {}", input.name, context.owner()))
 //! }
 //!
-//! async fn greet() -> String {
+//! async fn run() -> String {
 //!     let client = Client::new("acme", Provider);
-//!     client.call(Greet { name: "omnia".into() }, &Metadata::default()).await.unwrap()
+//!     client.call(greet, Greet { name: "omnia".into() }, &Metadata::default()).await.unwrap()
 //! }
 //! ```
 
@@ -114,21 +112,45 @@ impl Metadata {
     }
 }
 
-/// Context shared with a handler call.
-#[derive(Clone, Copy, Debug)]
-pub struct Context<'a, P> {
-    /// The owning tenant or namespace.
-    pub owner: &'a str,
-
-    /// The provider used to fulfil the call.
-    pub provider: &'a P,
+/// Context owned by one handler call.
+#[derive(Clone, Debug)]
+pub struct Context<P> {
+    owner: Arc<str>,
+    provider: Arc<P>,
 
     /// Transport-neutral invocation metadata.
-    pub metadata: &'a Metadata,
+    pub metadata: Metadata,
 }
 
-/// A stateless application handler whose `Self` is the input.
-pub trait Handler<P>: Sized + Send {
+impl<P> Context<P> {
+    /// Create a context outside a [`Client`], typically to unit-test a handler.
+    pub fn new(owner: impl Into<String>, provider: P, metadata: Metadata) -> Self {
+        Self {
+            owner: Arc::from(owner.into()),
+            provider: Arc::new(provider),
+            metadata,
+        }
+    }
+
+    /// Return the owning tenant or namespace.
+    #[must_use]
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// Return the provider used to fulfil the call.
+    #[must_use]
+    pub fn provider(&self) -> &P {
+        &self.provider
+    }
+}
+
+/// An application handler: any `async fn(I, Context<P>) -> Result<O, E>`.
+///
+/// Every such fn (and every `Clone` closure of that shape) is a `Handler`
+/// through the blanket impl; implement the trait by hand only for a
+/// non-fn type.
+pub trait Handler<P, I>: Clone + Send + Sync + 'static {
     /// The typed handler output.
     type Output: Send;
 
@@ -140,9 +162,28 @@ pub trait Handler<P>: Sized + Send {
     /// # Errors
     ///
     /// Returns the handler's error.
-    fn handle(
-        self, context: Context<'_, P>,
+    fn call(
+        self, input: I, context: Context<P>,
     ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
+}
+
+// `I` is a trait parameter rather than an associated type: an associated
+// `Input` would be unconstrained in this blanket impl (E0207).
+impl<F, Fut, P, I, O, E> Handler<P, I> for F
+where
+    F: FnOnce(I, Context<P>) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<O, E>> + Send,
+    O: Send,
+    E: Error + Send + Sync + 'static,
+{
+    type Error = E;
+    type Output = O;
+
+    fn call(
+        self, input: I, context: Context<P>,
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send {
+        self(input, context)
+    }
 }
 
 /// Provider-owning handler client.
@@ -180,15 +221,18 @@ impl<P: Send + Sync + 'static> Client<P> {
     /// # Errors
     ///
     /// Returns the handler's error.
-    pub async fn call<H: Handler<P>>(
-        &self, input: H, metadata: &Metadata,
-    ) -> Result<H::Output, H::Error> {
+    pub async fn call<F, I>(
+        &self, handler: F, input: I, metadata: &Metadata,
+    ) -> Result<F::Output, F::Error>
+    where
+        F: Handler<P, I>,
+    {
         let context = Context {
-            owner: self.owner.as_ref(),
-            provider: self.provider.as_ref(),
-            metadata,
+            owner: Arc::clone(&self.owner),
+            provider: Arc::clone(&self.provider),
+            metadata: metadata.clone(),
         };
-        input.handle(context).await
+        handler.call(input, context).await
     }
 }
 

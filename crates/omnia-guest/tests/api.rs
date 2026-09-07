@@ -1,5 +1,8 @@
 //! Handler invocation and HTTP routing contracts.
 
+// The handler contract is async; these test bodies just have nothing to await.
+#![allow(clippy::unused_async)]
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::body::{Body, to_bytes};
@@ -12,7 +15,7 @@ use omnia_guest::api::http::{
 use omnia_guest::api::messaging::{
     Delivery, DeliveryError, Router as MessagingRouter, consume, consume_with,
 };
-use omnia_guest::api::{Client, Context, DecodeError, Handler, Metadata};
+use omnia_guest::api::{Client, Context, DecodeError, Metadata};
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt as _;
 
@@ -30,46 +33,14 @@ struct EchoOutput {
     correlation_id: Option<String>,
 }
 
-impl<P: Send + Sync + 'static> Handler<P> for EchoInput {
-    type Error = omnia_guest::Error;
-    type Output = EchoOutput;
-
-    fn handle(
-        self, context: Context<'_, P>,
-    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        std::future::ready(Ok(EchoOutput {
-            name: self.name,
-            count: self.count.unwrap_or(1),
-            owner: context.owner.to_owned(),
-            correlation_id: context.metadata.correlation_id.clone(),
-        }))
-    }
-}
-
-/// Input type promoted to a handler by `#[handler]` below.
-#[derive(Debug, Deserialize)]
-struct MacroEcho {
-    name: String,
-}
-
-#[derive(Debug, Serialize)]
-struct MacroEchoReply {
-    name: String,
-    owner: String,
-}
-
-#[omnia_guest::handler]
-// The Handler contract is async; this test body just has nothing to await.
-#[allow(clippy::unused_async)]
-async fn macro_echo<P>(
-    input: MacroEcho, context: Context<'_, P>,
-) -> omnia_guest::Result<MacroEchoReply>
-where
-    P: Send + Sync + 'static,
-{
-    Ok(MacroEchoReply {
+async fn echo<P: Send + Sync + 'static>(
+    input: EchoInput, context: Context<P>,
+) -> Result<EchoOutput, omnia_guest::Error> {
+    Ok(EchoOutput {
         name: input.name,
-        owner: context.owner.to_owned(),
+        count: input.count.unwrap_or(1),
+        owner: context.owner().to_owned(),
+        correlation_id: context.metadata.correlation_id.clone(),
     })
 }
 
@@ -88,30 +59,25 @@ struct ObserveInput {
     name: String,
 }
 
-impl Handler<StatefulProvider> for ObserveInput {
-    type Error = omnia_guest::Error;
-    type Output = ProviderObservation;
-
-    fn handle(
-        self, context: Context<'_, StatefulProvider>,
-    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        let _ = self.name;
-        std::future::ready(Ok(ProviderObservation {
-            address: std::ptr::from_ref(context.provider).addr(),
-            call: context.provider.calls.fetch_add(1, Ordering::SeqCst) + 1,
-        }))
-    }
+async fn observe(
+    input: ObserveInput, context: Context<StatefulProvider>,
+) -> Result<ProviderObservation, omnia_guest::Error> {
+    let _ = input.name;
+    Ok(ProviderObservation {
+        address: std::ptr::from_ref(context.provider()).addr(),
+        call: context.provider().calls.fetch_add(1, Ordering::SeqCst) + 1,
+    })
 }
 
 fn router() -> axum::Router {
     axum::Router::new()
-        .route("/echo", get::<EchoInput, ()>())
-        .route("/echo", post::<EchoInput, ()>())
-        .route("/echo/{name}", get::<EchoInput, ()>())
-        .route("/echo/{name}", post::<EchoInput, ()>())
-        .route("/echo/{name}", put::<EchoInput, ()>())
-        .route("/echo/{name}", patch::<EchoInput, ()>())
-        .route("/echo/{name}", delete::<EchoInput, ()>())
+        .route("/echo", get(echo))
+        .route("/echo", post(echo))
+        .route("/echo/{name}", get(echo))
+        .route("/echo/{name}", post(echo))
+        .route("/echo/{name}", put(echo))
+        .route("/echo/{name}", patch(echo))
+        .route("/echo/{name}", delete(echo))
         .with_state(Client::new("test", ()))
 }
 
@@ -133,6 +99,7 @@ async fn invoke() {
 
     let output = client
         .call(
+            echo,
             EchoInput {
                 name: "core".to_string(),
                 count: None,
@@ -147,21 +114,21 @@ async fn invoke() {
 }
 
 #[tokio::test]
-async fn invoke_macro_handler() {
-    let client = Client::new("tenant", ());
+async fn invoke_with_direct_context() {
+    let context = Context::new("tenant", (), Metadata::default());
 
-    let output = client
-        .call(
-            MacroEcho {
-                name: "generated".to_string(),
-            },
-            &Metadata::default(),
-        )
-        .await
-        .expect("handler succeeds");
+    let output = echo(
+        EchoInput {
+            name: "direct".to_string(),
+            count: Some(2),
+        },
+        context,
+    )
+    .await
+    .expect("handler succeeds");
 
-    assert_eq!(output.name, "generated");
     assert_eq!(output.owner, "tenant");
+    assert_eq!(output.count, 2);
 }
 
 #[tokio::test]
@@ -311,8 +278,8 @@ async fn unregistered_method() {
 #[tokio::test]
 async fn route_state_clones_share_provider() {
     let router = axum::Router::new()
-        .route("/first", get::<ObserveInput, StatefulProvider>())
-        .route("/second", get::<ObserveInput, StatefulProvider>())
+        .route("/first", get(observe))
+        .route("/second", get(observe))
         .with_state(Client::new(
             "test",
             StatefulProvider {
@@ -350,6 +317,35 @@ async fn route_state_clones_share_provider() {
     assert_eq!(second["call"], 2);
 }
 
+#[derive(Debug, Deserialize)]
+struct Welcome {
+    name: String,
+}
+
+#[tokio::test]
+async fn closure_handler_with_configuration() {
+    let greeting = "welcome".to_string();
+    let router = axum::Router::new()
+        .route(
+            "/welcome",
+            get(move |input: Welcome, _context: Context<()>| async move {
+                Ok::<_, omnia_guest::Error>(format!("{greeting}, {}", input.name))
+            }),
+        )
+        .with_state(Client::new("test", ()));
+
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/welcome?name=ada")
+        .body(Body::empty())
+        .expect("build request");
+    let response = router.oneshot(request).await.expect("router serves request");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("collect body");
+    assert_eq!(serde_json::from_slice::<String>(&bytes).expect("decode body"), "welcome, ada");
+}
+
 fn delivery(topic: Option<&str>, payload: &[u8]) -> Delivery {
     Delivery {
         topic: topic.map(str::to_owned),
@@ -361,8 +357,8 @@ fn delivery(topic: Option<&str>, payload: &[u8]) -> Delivery {
 
 #[tokio::test]
 async fn messaging_exact_topic() {
-    let router = MessagingRouter::new(Client::new("messages", ()))
-        .route("events.created", consume::<EchoInput>());
+    let router =
+        MessagingRouter::new(Client::new("messages", ())).route("events.created", consume(echo));
 
     router
         .handle(delivery(Some("events.created"), br#"{"name":"message","count":2}"#))
@@ -376,8 +372,7 @@ async fn messaging_exact_topic() {
 
 #[tokio::test]
 async fn messaging_failures() {
-    let router =
-        MessagingRouter::new(Client::new("messages", ())).route("events", consume::<EchoInput>());
+    let router = MessagingRouter::new(Client::new("messages", ())).route("events", consume(echo));
 
     assert_eq!(
         router.handle(delivery(None, br#"{"name":"message"}"#)).await,
@@ -393,8 +388,8 @@ async fn messaging_failures() {
 #[should_panic(expected = "duplicate messaging topic")]
 fn messaging_duplicate_topic() {
     let _router = MessagingRouter::new(Client::new("messages", ()))
-        .route("events", consume::<EchoInput>())
-        .route("events", consume::<EchoInput>());
+        .route("events", consume(echo))
+        .route("events", consume(echo));
 }
 
 #[derive(Debug)]
@@ -402,23 +397,18 @@ struct RawText {
     text: String,
 }
 
-impl<P: Send + Sync + 'static> Handler<P> for RawText {
-    type Error = omnia_guest::Error;
-    type Output = ();
-
-    fn handle(
-        self, _context: Context<'_, P>,
-    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        let _ = self.text;
-        std::future::ready(Ok(()))
-    }
+async fn raw_text<P: Send + Sync + 'static>(
+    input: RawText, _context: Context<P>,
+) -> Result<(), omnia_guest::Error> {
+    let _ = input.text;
+    Ok(())
 }
 
 #[tokio::test]
 async fn consume_with_raw_payload() {
     let router = MessagingRouter::new(Client::new("messages", ())).route(
         "events.raw",
-        consume_with(|delivery: &Delivery| {
+        consume_with(raw_text, |delivery: &Delivery| {
             std::str::from_utf8(&delivery.payload)
                 .map(|text| RawText {
                     text: text.to_owned(),
@@ -438,15 +428,10 @@ struct JoinNames {
     names: Vec<String>,
 }
 
-impl<P: Send + Sync + 'static> Handler<P> for JoinNames {
-    type Error = omnia_guest::Error;
-    type Output = String;
-
-    fn handle(
-        self, _context: Context<'_, P>,
-    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        std::future::ready(Ok(self.names.join(" & ")))
-    }
+async fn join_names<P: Send + Sync + 'static>(
+    input: JoinNames, _context: Context<P>,
+) -> Result<String, omnia_guest::Error> {
+    Ok(input.names.join(" & "))
 }
 
 #[derive(Debug)]
@@ -455,15 +440,10 @@ struct Greet {
     greeting: String,
 }
 
-impl<P: Send + Sync + 'static> Handler<P> for Greet {
-    type Error = omnia_guest::Error;
-    type Output = String;
-
-    fn handle(
-        self, _context: Context<'_, P>,
-    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        std::future::ready(Ok(format!("{}, {}", self.greeting, self.name)))
-    }
+async fn greet<P: Send + Sync + 'static>(
+    input: Greet, _context: Context<P>,
+) -> Result<String, omnia_guest::Error> {
+    Ok(format!("{}, {}", input.greeting, input.name))
 }
 
 fn text_response(body: String) -> Response {
@@ -477,6 +457,7 @@ fn text_router() -> axum::Router {
             "/join",
             handle_with(
                 MethodFilter::POST.or(MethodFilter::PUT),
+                join_names,
                 |raw: RawRequest<'_>| {
                     let body = std::str::from_utf8(raw.body)
                         .map_err(|error| DecodeError::new(format!("body is not utf-8: {error}")))?;
@@ -491,6 +472,7 @@ fn text_router() -> axum::Router {
             "/greet/{name}",
             handle_with(
                 MethodFilter::GET,
+                greet,
                 |raw: RawRequest<'_>| {
                     let name = raw
                         .path_params
@@ -609,19 +591,10 @@ impl From<EmptyName> for HttpError {
     }
 }
 
-impl<P: Send + Sync + 'static> Handler<P> for XmlGreet {
-    type Error = EmptyName;
-    type Output = String;
-
-    fn handle(
-        self, _context: Context<'_, P>,
-    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
-        std::future::ready(if self.name.is_empty() {
-            Err(EmptyName)
-        } else {
-            Ok(format!("hello, {}", self.name))
-        })
-    }
+async fn xml_greet<P: Send + Sync + 'static>(
+    input: XmlGreet, _context: Context<P>,
+) -> Result<String, EmptyName> {
+    if input.name.is_empty() { Err(EmptyName) } else { Ok(format!("hello, {}", input.name)) }
 }
 
 fn parse_greet(headers: &HeaderMap, body: &[u8]) -> Result<XmlGreet, DecodeError> {
@@ -647,6 +620,7 @@ fn xml_router() -> axum::Router {
             "/greet",
             handle_with(
                 MethodFilter::POST,
+                xml_greet,
                 |raw: RawRequest<'_>| parse_greet(raw.headers, raw.body),
                 |greeting: String| {
                     (

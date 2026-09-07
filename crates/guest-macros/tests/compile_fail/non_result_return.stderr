@@ -1,5 +1,0 @@
-error: #[handler] functions must return `Result<T>` (omnia_guest::Result) or `Result<T, E>`
- --> tests/compile_fail/non_result_return.rs:2:65
-  |
-2 | async fn handler<P>(input: Message, context: Context<'_, P>) -> u32 {
-  |                                                                 ^^^

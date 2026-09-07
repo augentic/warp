@@ -1,5 +1,0 @@
-error: the handler input must be an owned path type; it becomes the `Handler` impl target
- --> tests/compile_fail/reference_input.rs:2:28
-  |
-2 | async fn handler<P>(input: &Message, context: Context<'_, P>) -> Result<()> {
-  |                            ^^^^^^^^

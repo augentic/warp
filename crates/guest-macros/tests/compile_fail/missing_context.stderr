@@ -1,5 +1,0 @@
-error: #[handler] expects exactly two parameters: `(input: <InputType>, context: Context<'_, P>)`
- --> tests/compile_fail/missing_context.rs:2:18
-  |
-2 | async fn handler(input: Message) -> Result<()> {
-  |                  ^^^^^^^^^^^^^^

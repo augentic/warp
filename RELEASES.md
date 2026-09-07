@@ -51,8 +51,9 @@
   (`unavailable` → `BadGateway`, `internal` → `ServerError`, every other
   refusal → `BadRequest`), and `PluginCache` — ensure-once memoization of
   handles by package identity (never bytes; a conflicting re-pin refuses
-  `already-active`, mirroring the host). No consumer vocabulary anywhere:
-  any requester-class world can use it.
+  `already-active`, mirroring the host), itself a `Plugins` provider so a
+  caller bounded on the capability memoizes without naming the cache. No
+  consumer vocabulary anywhere: any requester-class world can use it.
 
 - `hosts:` rows accept compiled-in connect options: `Host: Backend(options)`
   lowers to `Backend::connect_with(options)` instead of the env-sourced

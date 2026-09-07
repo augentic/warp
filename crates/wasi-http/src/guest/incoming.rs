@@ -22,11 +22,11 @@ pub async fn serve(
 }
 
 macro_rules! error {
-    ($fmt:expr, $($arg:tt)*) => {
-        p3::ErrorCode::InternalError(Some(format!($fmt, $($arg)*)))
+    ($fmt:literal $($arg:tt)*) => {
+        p3::ErrorCode::InternalError(Some(format!($fmt $($arg)*)))
     };
-     ($err:expr $(,)?) => {
-        p3::ErrorCode::InternalError(Some(format!($err)))
+    ($err:expr $(,)?) => {
+        p3::ErrorCode::InternalError(Some($err.to_string()))
     };
 }
 pub(crate) use error;

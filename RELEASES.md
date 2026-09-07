@@ -146,10 +146,11 @@
   trait method is `call(self, input, context)`, and implementing it by hand
   on a local non-fn type is the documented escape hatch. Route
   constructors take the handler value instead of a type parameter:
-  `get(handler)` / `delete` / `post` / `put` / `patch`,
-  `handle_with(filter, handler, decode, encode)` with the decoder returning
-  `Result<I, DecodeError>` and the encoder `Fn(F::Output) -> Response`,
-  `consume(handler)`, and `consume_with(handler, decode)`;
+  `get(handler)` / `delete(handler)` / `post(handler)` / `put(handler)` /
+  `patch(handler)`, `handle_with(filter, handler, decode, encode)` with the
+  decoder returning `Result<I, DecodeError>` and the encoder
+  `Fn(F::Output) -> Response`, `consume(handler)`, and
+  `consume_with(handler, decode)`;
   `Client::call(handler, input, &metadata)` takes the handler first.
   Nothing on the wire changes (JSON envelope, `HttpError`, `DeliveryError`,
   exit codes). The `#[omnia_guest::handler]` proc-macro and its

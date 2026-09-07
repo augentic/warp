@@ -2,7 +2,8 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use omnia_guest::plugins::{Digest, Error, Location, PluginCache, PluginRef};
+use omnia_guest::Plugins;
+use omnia_guest::plugins::{Digest, Error, Location, Plugin, PluginCache, PluginRef};
 use omnia_test::guest::ScriptedLoader;
 
 fn digest(hex_pair: &str) -> Digest {
@@ -48,4 +49,19 @@ async fn ensure_refuses_conflicting_re_pin() {
         .await
         .expect("matching pin served from the memo");
     assert_eq!(matching.digest(), &digest("ab"));
+}
+
+// A cache drops into any `Plugins`-bounded caller and memoizes there.
+#[tokio::test]
+async fn cache_is_a_provider() {
+    async fn load_twice<P: Plugins>(provider: &P) -> Plugin {
+        let plugin = path_ref("test:echoer", None);
+        Plugins::load(provider, &plugin).await.expect("cold load");
+        Plugins::load(provider, &plugin).await.expect("memo hit")
+    }
+
+    let loader = ScriptedLoader::default();
+    let held = load_twice(&PluginCache::new(loader.clone())).await;
+    assert_eq!(loader.loads().len(), 1, "the memo answers the second load");
+    assert_eq!(held.id(), "test:echoer");
 }

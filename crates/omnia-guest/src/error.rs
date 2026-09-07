@@ -130,8 +130,10 @@ impl From<serde_json::Error> for Error {
 /// Create a new `BadRequest` error.
 #[macro_export]
 macro_rules! bad_request {
-    ($fmt:literal, $($arg:tt)*) => {
-        $crate::Error::BadRequest { code: "bad_request".to_string(), description: format!($fmt, $($arg)*) }
+    // A lone format string is also an expr; match the literal first so
+    // implicit `{name}` captures reach `format!` instead of `.to_string()`.
+    ($fmt:literal $($arg:tt)*) => {
+        $crate::Error::BadRequest { code: "bad_request".to_string(), description: format!($fmt $($arg)*) }
     };
     ($err:expr $(,)?) => {
         $crate::Error::BadRequest { code: "bad_request".to_string(), description: $err.to_string() }
@@ -141,8 +143,8 @@ macro_rules! bad_request {
 /// Create a new `NotFound` error.
 #[macro_export]
 macro_rules! not_found {
-    ($fmt:literal, $($arg:tt)*) => {
-        $crate::Error::NotFound { code: "not_found".to_string(), description: format!($fmt, $($arg)*) }
+    ($fmt:literal $($arg:tt)*) => {
+        $crate::Error::NotFound { code: "not_found".to_string(), description: format!($fmt $($arg)*) }
     };
     ($err:expr $(,)?) => {
         $crate::Error::NotFound { code: "not_found".to_string(), description: $err.to_string() }
@@ -152,8 +154,8 @@ macro_rules! not_found {
 /// Create a new `ServerError` error.
 #[macro_export]
 macro_rules! server_error {
-    ($fmt:literal, $($arg:tt)*) => {
-        $crate::Error::ServerError { code: "server_error".to_string(), description: format!($fmt, $($arg)*) }
+    ($fmt:literal $($arg:tt)*) => {
+        $crate::Error::ServerError { code: "server_error".to_string(), description: format!($fmt $($arg)*) }
     };
     ($err:expr $(,)?) => {
         $crate::Error::ServerError { code: "server_error".to_string(), description: $err.to_string() }
@@ -163,8 +165,8 @@ macro_rules! server_error {
 /// Create a new `BadGateway` error.
 #[macro_export]
 macro_rules! bad_gateway {
-    ($fmt:literal, $($arg:tt)*) => {
-        $crate::Error::BadGateway { code: "bad_gateway".to_string(), description: format!($fmt, $($arg)*) }
+    ($fmt:literal $($arg:tt)*) => {
+        $crate::Error::BadGateway { code: "bad_gateway".to_string(), description: format!($fmt $($arg)*) }
     };
     ($err:expr $(,)?) => {
         $crate::Error::BadGateway { code: "bad_gateway".to_string(), description: $err.to_string() }
@@ -239,9 +241,29 @@ mod tests {
 
     #[test]
     fn shortcut_macros_format() {
-        let err = bad_request!("invalid field: {field}", field = "name");
+        let field = "name";
+        assert_eq!(bad_request!("invalid field: {field}").description(), "invalid field: name");
+        assert_eq!(not_found!("missing {field}").description(), "missing name");
+        assert_eq!(server_error!("failed {field}").description(), "failed name");
+        assert_eq!(bad_gateway!("upstream {field}").description(), "upstream name");
+
+        let err = bad_request!("invalid field: {field}", field = "other");
         assert_eq!(err.code(), "bad_request");
-        assert_eq!(err.description(), "invalid field: name");
+        assert_eq!(err.description(), "invalid field: other");
+
+        let id = "abc";
+        let name = "spec.md";
+        let reason = "invalid utf-8";
+        assert_eq!(
+            server_error!("revision `{id}` contains `{name}` but it is not UTF-8 ({reason})")
+                .description(),
+            "revision `abc` contains `spec.md` but it is not UTF-8 (invalid utf-8)"
+        );
+        assert_eq!(
+            server_error!("revision `{}` contains `{}` but it is not UTF-8 ({})", id, name, reason)
+                .description(),
+            "revision `abc` contains `spec.md` but it is not UTF-8 (invalid utf-8)"
+        );
     }
 
     #[test]

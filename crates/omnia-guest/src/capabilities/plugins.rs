@@ -310,6 +310,15 @@ impl<P: Plugins> PluginCache<P> {
     }
 }
 
+/// A cache is itself a [`Plugins`] provider, so a caller bounded on the
+/// capability memoizes without naming the cache: every `load` is an
+/// [`ensure`](PluginCache::ensure).
+impl<P: Plugins> Plugins for PluginCache<P> {
+    fn load(&self, plugin: &PluginRef) -> impl Future<Output = Result<Plugin, Error>> + Send {
+        self.ensure(plugin)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Digest, Error};

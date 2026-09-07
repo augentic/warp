@@ -134,6 +134,47 @@
 
 ### Changed
 
+- Guest handlers are fns bound at the route, over an owned context.
+  `omnia_guest::api::Context<P>` drops its lifetime and `Copy`: it owns
+  `Arc<str>` / `Arc<P>` clones plus the `Metadata`, exposes `owner()` and
+  `provider()` accessors over private fields (the public `metadata` field
+  stays), and gains `Context::new(owner, provider, metadata)` so a handler
+  can be unit-tested without a `Client`. `Handler<P>` implemented on the
+  input type becomes `Handler<P, I>` with one blanket impl over every
+  `async fn(I, Context<P>) -> Result<O, E>` (and every `Clone` closure of
+  that shape, so a closure can carry configuration into a route); the
+  trait method is `call(self, input, context)`, and implementing it by hand
+  on a local non-fn type is the documented escape hatch. Route
+  constructors take the handler value instead of a type parameter:
+  `get(handler)` / `delete(handler)` / `post(handler)` / `put(handler)` /
+  `patch(handler)`, `handle_with(filter, handler, decode, encode)` with the
+  decoder returning `Result<I, DecodeError>` and the encoder
+  `Fn(F::Output) -> Response`, `consume(handler)`, and
+  `consume_with(handler, decode)`;
+  `Client::call(handler, input, &metadata)` takes the handler first.
+  Nothing on the wire changes (JSON envelope, `HttpError`, `DeliveryError`,
+  exit codes). The `#[omnia_guest::handler]` proc-macro and its
+  `omnia_guest::handler` re-export are deleted — rustc's own diagnostics
+  name a mis-shaped fn — and `omnia-guest` no longer depends on
+  `omnia-guest-macros`, which now provides only `#[instrument]` (still
+  reaching guests as `omnia_wasi_otel::instrument`).
+
+  ```rust
+  // before                                        // after
+  impl Handler<P> for CreateItem {                  async fn create_item(
+      type Output = ItemReply;                          input: CreateItem, context: Context<P>,
+      type Error = Error;                           ) -> Result<ItemReply, Error> {
+      async fn handle(                                  let cfg = context.provider().config();
+          self, context: Context<'_, P>,                // ...
+      ) -> Result<ItemReply, Error> {               }
+          let cfg = context.provider.config();
+          // ...
+      }
+  }
+  .route("/items", post::<CreateItem, P>())         .route("/items", post(create_item))
+  .route("t", consume::<CreateItem>())              .route("t", consume(create_item))
+  client.call(input, &metadata)                     client.call(create_item, input, &metadata)
+  ```
 - `omnia` is the composition root (deployment assembly, process
   lifecycle, optional-crate composition); `omnia-core` is the
   live-runtime SDK a capability crate targets; `omnia-cli` is a leaf

@@ -49,18 +49,20 @@ impl fmt::Display for DeliveryError {
 impl Error for DeliveryError {}
 
 /// A typed messaging route awaiting a topic.
-pub struct Consume<H, D> {
+pub struct Consume<F, I, D> {
+    handler: F,
     decode: D,
-    marker: PhantomData<fn() -> H>,
+    marker: PhantomData<fn() -> I>,
 }
 
 /// Create a messaging route with a custom delivery decoder.
 #[must_use]
-pub fn consume_with<H, D>(decode: D) -> Consume<H, D>
+pub fn consume_with<F, I, D>(handler: F, decode: D) -> Consume<F, I, D>
 where
-    D: Fn(&Delivery) -> Result<H, DecodeError> + Send + Sync + 'static,
+    D: Fn(&Delivery) -> Result<I, DecodeError> + Send + Sync + 'static,
 {
     Consume {
+        handler,
         decode,
         marker: PhantomData,
     }
@@ -68,9 +70,10 @@ where
 
 /// Create a JSON-decoded messaging route.
 #[must_use]
-pub fn consume<H: DeserializeOwned>()
--> Consume<H, impl Fn(&Delivery) -> Result<H, DecodeError> + Send + Sync + 'static> {
-    consume_with(|delivery: &Delivery| {
+pub fn consume<F, I: DeserializeOwned>(
+    handler: F,
+) -> Consume<F, I, impl Fn(&Delivery) -> Result<I, DecodeError> + Send + Sync + 'static> {
+    consume_with(handler, |delivery: &Delivery| {
         serde_json::from_slice(&delivery.payload)
             .map_err(|error| DecodeError::new(format!("malformed JSON payload: {error}")))
     })
@@ -82,16 +85,18 @@ trait ErasedRoute<P: Send + Sync + 'static>: Send + Sync {
     fn dispatch<'a>(&'a self, delivery: &'a Delivery, client: &'a Client<P>) -> DispatchFuture<'a>;
 }
 
-struct Route<P, H, D> {
+struct Route<P, F, I, D> {
+    handler: F,
     decode: D,
-    marker: PhantomData<fn(P) -> H>,
+    marker: PhantomData<fn(P) -> I>,
 }
 
-impl<P, H, D> ErasedRoute<P> for Route<P, H, D>
+impl<P, F, I, D> ErasedRoute<P> for Route<P, F, I, D>
 where
     P: Send + Sync + 'static,
-    H: Handler<P> + 'static,
-    D: Fn(&Delivery) -> Result<H, DecodeError> + Send + Sync + 'static,
+    F: Handler<P, I>,
+    I: Send + 'static,
+    D: Fn(&Delivery) -> Result<I, DecodeError> + Send + Sync + 'static,
 {
     fn dispatch<'a>(&'a self, delivery: &'a Delivery, client: &'a Client<P>) -> DispatchFuture<'a> {
         Box::pin(async move {
@@ -105,7 +110,7 @@ where
                     .map(|(_, value)| value.clone())
             });
             client
-                .call(input, &metadata)
+                .call(self.handler.clone(), input, &metadata)
                 .await
                 .map(|_| ())
                 .map_err(|error| DeliveryError::Rejected(error.to_string()))
@@ -135,17 +140,19 @@ impl<P: Send + Sync + 'static> Router<P> {
     ///
     /// Panics when the topic is empty or already registered.
     #[must_use]
-    pub fn route<H, D>(mut self, topic: impl Into<String>, consume: Consume<H, D>) -> Self
+    pub fn route<F, I, D>(mut self, topic: impl Into<String>, consume: Consume<F, I, D>) -> Self
     where
-        H: Handler<P> + 'static,
-        D: Fn(&Delivery) -> Result<H, DecodeError> + Send + Sync + 'static,
+        F: Handler<P, I>,
+        I: Send + 'static,
+        D: Fn(&Delivery) -> Result<I, DecodeError> + Send + Sync + 'static,
     {
         let topic = topic.into();
         assert!(!topic.is_empty(), "messaging topic cannot be empty");
         assert!(!self.routes.contains_key(&topic), "duplicate messaging topic `{topic}`");
         self.routes.insert(
             topic,
-            Arc::new(Route::<P, H, D> {
+            Arc::new(Route::<P, F, I, D> {
+                handler: consume.handler,
                 decode: consume.decode,
                 marker: PhantomData,
             }),

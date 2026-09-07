@@ -4,11 +4,11 @@ Shared traits, error types, and abstractions for building WASI guest components.
 
 ## Quick Start
 
-Implement `Handler` on an input type, then register it with an explicit transport router.
+A handler is an `async fn(I, Context<P>) -> Result<O, E>`. Write one, then register it with an explicit transport router.
 
 ```rust,ignore
 use omnia_guest::api::http::post;
-use omnia_guest::api::{Client, Context, Handler};
+use omnia_guest::api::{Client, Context};
 use omnia_guest::Error;
 use serde::{Deserialize, Serialize};
 
@@ -25,43 +25,25 @@ struct ItemResponse {
 
 struct MyProvider;
 
-impl Handler<MyProvider> for CreateItem {
-    type Output = ItemResponse;
-    type Error = Error;
-
-    async fn handle(
-        self,
-        _context: Context<'_, MyProvider>,
-    ) -> Result<Self::Output, Self::Error> {
-        Ok(ItemResponse {
-            id: "123".to_string(),
-            name: self.name,
-        })
-    }
+async fn create_item(
+    input: CreateItem, context: Context<MyProvider>,
+) -> Result<ItemResponse, Error> {
+    Ok(ItemResponse {
+        id: format!("{}-123", context.owner()),
+        name: input.name,
+    })
 }
 
 fn router() -> axum::Router {
     axum::Router::new()
-        .route("/items", post::<CreateItem, MyProvider>())
+        .route("/items", post(create_item))
         .with_state(Client::new("my-org", MyProvider))
 }
 ```
 
-Instead of writing the impl by hand, `#[omnia_guest::handler]` derives it from a bare `async fn` taking the owned input and a `Context<'_, P>`:
+Every fn of that shape (and every `Clone` closure of it, so a closure can carry configuration) is a `Handler<P, I>` through a blanket impl; implementing the trait by hand on a local non-fn type is the escape hatch, not the norm. Name the fn for the operation (`create_item`) and keep the input DTO's noun (`CreateItem`).
 
-```rust,ignore
-#[omnia_guest::handler]
-async fn create_item<P>(
-    input: CreateItem, context: Context<'_, P>,
-) -> omnia_guest::Result<ItemResponse>
-where
-    P: Send + Sync + 'static,
-{
-    // ...
-}
-```
-
-`Client` owns the provider and supplies `Context` (owner, provider, metadata) when it calls the handler. The application owns its WASI export explicitly:
+`Client` owns the provider and builds the owned `Context` (`owner()`, `provider()`, public `metadata`) each call receives; `Context::new(owner, provider, metadata)` builds one directly for unit-testing a handler without a `Client`. The application owns its WASI export explicitly:
 
 ```rust,ignore
 struct Http;
@@ -82,16 +64,16 @@ Messaging routes use the same handlers with exact topic registration:
 use omnia_guest::api::messaging::{Router, consume};
 
 let router = Router::new(Client::new("my-org", MyProvider))
-    .route("items.created", consume::<CreateItem>());
+    .route("items.created", consume(create_item));
 ```
 
 `consume` decodes JSON and acknowledges successful output.
 
 ### Custom codecs
 
-`get`/`post`/`put`/`patch`/`delete`/`consume` are JSON defaults: `get` and `delete` decode path and query parameters, while `post`/`put`/`patch` merge a JSON body with path parameters. When a route speaks another wire format (or needs other methods), supply the codec yourself: `handle_with` pairs a `MethodFilter` (unions work, e.g. `MethodFilter::POST.or(MethodFilter::PUT)`) with a decoder `Fn(RawRequest<'_>) -> Result<H, DecodeError>` over the raw request (path parameters, query, headers, body) and an encoder `Fn(H::Output) -> Response` (reuse `axum::Json` for JSON output); `consume_with` takes a decoder `Fn(&Delivery) -> Result<H, DecodeError>` over the whole delivery. Errors keep flowing through `Into<HttpError>`; `HttpError::with_body` carries a preformatted error body (e.g. an XML document) with its content type.
+`get`/`post`/`put`/`patch`/`delete`/`consume` are JSON defaults: `get` and `delete` decode path and query parameters, while `post`/`put`/`patch` merge a JSON body with path parameters. When a route speaks another wire format (or needs other methods), supply the codec yourself: `handle_with(filter, handler, decode, encode)` pairs a `MethodFilter` (unions work, e.g. `MethodFilter::POST.or(MethodFilter::PUT)`) with a decoder `Fn(RawRequest<'_>) -> Result<I, DecodeError>` over the raw request (path parameters, query, headers, body) and an encoder `Fn(F::Output) -> Response` (reuse `axum::Json` for JSON output); `consume_with(handler, decode)` takes a decoder `Fn(&Delivery) -> Result<I, DecodeError>` over the whole delivery. Errors keep flowing through `Into<HttpError>`; `HttpError::with_body` carries a preformatted error body (e.g. an XML document) with its content type.
 
-Command-mode guests parse argv with clap and call `Client::call` on the same handlers. `omnia_guest::command!(entry)` wires an `async fn` returning `()` or `Result<(), u8>` as the `wasi:cli/run` export through `command::execute_wasi`, so guest telemetry is initialized and flushed. Omnia creates a fresh component instance for each command invocation.
+Command-mode guests parse argv with clap and call `Client::call(handler, input, &metadata)` on the same handlers. `omnia_guest::command!(entry)` wires an `async fn` returning `()` or `Result<(), u8>` as the `wasi:cli/run` export through `command::execute_wasi`, so guest telemetry is initialized and flushed. Omnia creates a fresh component instance for each command invocation.
 
 ## Capabilities
 

@@ -1,7 +1,7 @@
 //! # CLI Command Wasm Guest
 //!
-//! A `wasi:cli/command` reactor: clap argv, `Client::call`, and
-//! `command::execute_wasi`.
+//! A `wasi:cli/command` reactor: clap argv, `Client::call` on fn handlers,
+//! and `command::execute_wasi`.
 //!
 //! The module is `#[cfg(target_arch = "wasm32")]`-guarded because examples
 //! also compile for the host triple, where `wasip3` is unavailable.
@@ -12,7 +12,7 @@ use std::error::Error;
 use std::fmt;
 
 use clap::{Args, Parser};
-use omnia_guest::api::{Client, Context, Handler, Metadata, command};
+use omnia_guest::api::{Client, Context, Metadata, command};
 use wasip3::exports::cli::run::Guest;
 
 #[derive(Parser)]
@@ -48,8 +48,6 @@ struct AddInput {
     numbers: Vec<i64>,
 }
 
-struct EnvInput;
-
 #[derive(Args)]
 struct FailInput {
     /// Specific exit code to carry through wasi:cli/exit
@@ -77,40 +75,20 @@ impl fmt::Display for CommandError {
 
 impl Error for CommandError {}
 
-impl Handler<Provider> for GreetInput {
-    type Error = CommandError;
-    type Output = String;
-
-    async fn handle(self, context: Context<'_, Provider>) -> Result<Self::Output, Self::Error> {
-        Ok(format!("{}, {}!\n", context.provider.greeting, self.name))
-    }
+async fn greet(input: GreetInput, context: Context<Provider>) -> Result<String, CommandError> {
+    Ok(format!("{}, {}!\n", context.provider().greeting, input.name))
 }
 
-impl Handler<Provider> for AddInput {
-    type Error = CommandError;
-    type Output = String;
-
-    async fn handle(self, _context: Context<'_, Provider>) -> Result<Self::Output, Self::Error> {
-        Ok(format!("{}\n", self.numbers.iter().sum::<i64>()))
-    }
+async fn add(input: AddInput, _context: Context<Provider>) -> Result<String, CommandError> {
+    Ok(format!("{}\n", input.numbers.iter().sum::<i64>()))
 }
 
-impl Handler<Provider> for EnvInput {
-    type Error = CommandError;
-    type Output = String;
-
-    async fn handle(self, _context: Context<'_, Provider>) -> Result<Self::Output, Self::Error> {
-        Ok(std::env::vars().map(|(key, value)| format!("{key}={value}\n")).collect())
-    }
+async fn env((): (), _context: Context<Provider>) -> Result<String, CommandError> {
+    Ok(std::env::vars().map(|(key, value)| format!("{key}={value}\n")).collect())
 }
 
-impl Handler<Provider> for FailInput {
-    type Error = CommandError;
-    type Output = String;
-
-    async fn handle(self, _context: Context<'_, Provider>) -> Result<Self::Output, Self::Error> {
-        Err(self.code.map_or(CommandError::Plain, CommandError::Exit))
-    }
+async fn fail(input: FailInput, _context: Context<Provider>) -> Result<String, CommandError> {
+    Err(input.code.map_or(CommandError::Plain, CommandError::Exit))
 }
 
 struct Cli;
@@ -130,10 +108,10 @@ async fn dispatch() -> Result<(), u8> {
     let client = Client::new("examples", Provider { greeting: "Hello" });
     let metadata = Metadata::default();
     let result = match app {
-        App::Greet(input) => client.call(input, &metadata).await,
-        App::Add(input) => client.call(input, &metadata).await,
-        App::Env => client.call(EnvInput, &metadata).await,
-        App::Fail(input) => client.call(input, &metadata).await,
+        App::Greet(input) => client.call(greet, input, &metadata).await,
+        App::Add(input) => client.call(add, input, &metadata).await,
+        App::Env => client.call(env, (), &metadata).await,
+        App::Fail(input) => client.call(fail, input, &metadata).await,
     };
     match result {
         Ok(output) => {

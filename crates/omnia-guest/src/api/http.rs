@@ -142,15 +142,19 @@ impl<S: Send + Sync> FromRequestParts<S> for Metadata {
 ///
 /// ```rust,ignore
 /// use axum::response::IntoResponse;
-/// use omnia_guest::api::Client;
+/// use omnia_guest::api::{Client, Context};
 /// use omnia_guest::api::http::{DecodeError, MethodFilter, RawRequest, handle_with};
 ///
-/// // `ImportText` implements `Handler<Provider>` with `Output = String`.
+/// async fn import_text(input: ImportText, context: Context<Provider>) -> Result<String, Error> {
+///     // ...
+/// }
+///
 /// let router = axum::Router::new()
 ///     .route(
 ///         "/import",
 ///         handle_with(
 ///             MethodFilter::POST.or(MethodFilter::PUT),
+///             import_text,
 ///             |raw: RawRequest<'_>| {
 ///                 let text = std::str::from_utf8(raw.body)
 ///                     .map_err(|error| DecodeError::new(format!("body is not utf-8: {error}")))?;
@@ -161,14 +165,15 @@ impl<S: Send + Sync> FromRequestParts<S> for Metadata {
 ///     )
 ///     .with_state(Client::new("acme", Provider));
 /// ```
-pub fn handle_with<H, P, D, E>(
-    filter: MethodFilter, decode: D, encode: E,
+pub fn handle_with<F, P, I, D, E>(
+    filter: MethodFilter, handler: F, decode: D, encode: E,
 ) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + 'static,
-    H::Error: Into<HttpError>,
-    D: Fn(RawRequest<'_>) -> Result<H, DecodeError> + Clone + Send + Sync + 'static,
-    E: Fn(H::Output) -> Response + Clone + Send + Sync + 'static,
+    F: Handler<P, I>,
+    F::Error: Into<HttpError>,
+    I: Send + 'static,
+    D: Fn(RawRequest<'_>) -> Result<I, DecodeError> + Clone + Send + Sync + 'static,
+    E: Fn(F::Output) -> Response + Clone + Send + Sync + 'static,
     P: Send + Sync + 'static,
 {
     routing::on(
@@ -179,90 +184,107 @@ where
               headers: HeaderMap,
               metadata: Metadata,
               body: Bytes| {
-            dispatch((decode, encode), state, params, query, headers, metadata, body)
+            dispatch(
+                (handler.clone(), decode.clone(), encode.clone()),
+                state,
+                params,
+                query,
+                headers,
+                metadata,
+                body,
+            )
         },
     )
 }
 
 /// Create a GET route decoding path and query parameters as JSON input.
-pub fn get<H, P>() -> MethodRouter<Client<P>>
+pub fn get<F, P, I>(handler: F) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + DeserializeOwned + 'static,
-    H::Output: Serialize,
-    H::Error: Into<HttpError>,
+    F: Handler<P, I>,
+    F::Output: Serialize,
+    F::Error: Into<HttpError>,
+    I: DeserializeOwned + Send + 'static,
     P: Send + Sync + 'static,
 {
-    json_query::<H, P>(MethodFilter::GET)
+    json_query(MethodFilter::GET, handler)
 }
 
 /// Create a DELETE route decoding path and query parameters as JSON input.
-pub fn delete<H, P>() -> MethodRouter<Client<P>>
+pub fn delete<F, P, I>(handler: F) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + DeserializeOwned + 'static,
-    H::Output: Serialize,
-    H::Error: Into<HttpError>,
+    F: Handler<P, I>,
+    F::Output: Serialize,
+    F::Error: Into<HttpError>,
+    I: DeserializeOwned + Send + 'static,
     P: Send + Sync + 'static,
 {
-    json_query::<H, P>(MethodFilter::DELETE)
+    json_query(MethodFilter::DELETE, handler)
 }
 
 /// Create a POST route decoding a JSON body merged with path parameters.
-pub fn post<H, P>() -> MethodRouter<Client<P>>
+pub fn post<F, P, I>(handler: F) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + DeserializeOwned + 'static,
-    H::Output: Serialize,
-    H::Error: Into<HttpError>,
+    F: Handler<P, I>,
+    F::Output: Serialize,
+    F::Error: Into<HttpError>,
+    I: DeserializeOwned + Send + 'static,
     P: Send + Sync + 'static,
 {
-    json_body::<H, P>(MethodFilter::POST)
+    json_body(MethodFilter::POST, handler)
 }
 
 /// Create a PUT route decoding a JSON body merged with path parameters.
-pub fn put<H, P>() -> MethodRouter<Client<P>>
+pub fn put<F, P, I>(handler: F) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + DeserializeOwned + 'static,
-    H::Output: Serialize,
-    H::Error: Into<HttpError>,
+    F: Handler<P, I>,
+    F::Output: Serialize,
+    F::Error: Into<HttpError>,
+    I: DeserializeOwned + Send + 'static,
     P: Send + Sync + 'static,
 {
-    json_body::<H, P>(MethodFilter::PUT)
+    json_body(MethodFilter::PUT, handler)
 }
 
 /// Create a PATCH route decoding a JSON body merged with path parameters.
-pub fn patch<H, P>() -> MethodRouter<Client<P>>
+pub fn patch<F, P, I>(handler: F) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + DeserializeOwned + 'static,
-    H::Output: Serialize,
-    H::Error: Into<HttpError>,
+    F: Handler<P, I>,
+    F::Output: Serialize,
+    F::Error: Into<HttpError>,
+    I: DeserializeOwned + Send + 'static,
     P: Send + Sync + 'static,
 {
-    json_body::<H, P>(MethodFilter::PATCH)
+    json_body(MethodFilter::PATCH, handler)
 }
 
-fn json_query<H, P>(filter: MethodFilter) -> MethodRouter<Client<P>>
+fn json_query<F, P, I>(filter: MethodFilter, handler: F) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + DeserializeOwned + 'static,
-    H::Output: Serialize,
-    H::Error: Into<HttpError>,
+    F: Handler<P, I>,
+    F::Output: Serialize,
+    F::Error: Into<HttpError>,
+    I: DeserializeOwned + Send + 'static,
     P: Send + Sync + 'static,
 {
     handle_with(
         filter,
-        |raw: RawRequest<'_>| query_input::<H>(raw.path_params, raw.query),
+        handler,
+        |raw: RawRequest<'_>| query_input::<I>(raw.path_params, raw.query),
         json_response,
     )
 }
 
-fn json_body<H, P>(filter: MethodFilter) -> MethodRouter<Client<P>>
+fn json_body<F, P, I>(filter: MethodFilter, handler: F) -> MethodRouter<Client<P>>
 where
-    H: Handler<P> + DeserializeOwned + 'static,
-    H::Output: Serialize,
-    H::Error: Into<HttpError>,
+    F: Handler<P, I>,
+    F::Output: Serialize,
+    F::Error: Into<HttpError>,
+    I: DeserializeOwned + Send + 'static,
     P: Send + Sync + 'static,
 {
     handle_with(
         filter,
-        |raw: RawRequest<'_>| body_input::<H>(raw.path_params, raw.body),
+        handler,
+        |raw: RawRequest<'_>| body_input::<I>(raw.path_params, raw.body),
         json_response,
     )
 }
@@ -271,15 +293,15 @@ fn json_response<T: Serialize>(output: T) -> Response {
     Json(output).into_response()
 }
 
-async fn dispatch<H, P, D, E>(
-    (decode, encode): (D, E), State(client): State<Client<P>>, params: RawPathParams,
+async fn dispatch<F, P, I, D, E>(
+    (handler, decode, encode): (F, D, E), State(client): State<Client<P>>, params: RawPathParams,
     RawQuery(query): RawQuery, headers: HeaderMap, metadata: Metadata, body: Bytes,
 ) -> Response
 where
-    H: Handler<P>,
-    H::Error: Into<HttpError>,
-    D: Fn(RawRequest<'_>) -> Result<H, DecodeError>,
-    E: Fn(H::Output) -> Response,
+    F: Handler<P, I>,
+    F::Error: Into<HttpError>,
+    D: Fn(RawRequest<'_>) -> Result<I, DecodeError>,
+    E: Fn(F::Output) -> Response,
     P: Send + Sync + 'static,
 {
     let path_params: Vec<(String, String)> =
@@ -294,7 +316,7 @@ where
         Ok(input) => input,
         Err(error) => return HttpError::from(error).into_response(),
     };
-    match client.call(input, &metadata).await {
+    match client.call(handler, input, &metadata).await {
         Ok(output) => encode(output),
         Err(error) => Into::<HttpError>::into(error).into_response(),
     }

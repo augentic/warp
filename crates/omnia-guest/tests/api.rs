@@ -1,8 +1,6 @@
 //! Handler invocation and HTTP routing contracts.
 
-// The handler contract is async; these test bodies just have nothing to await.
-#![allow(clippy::unused_async)]
-
+use std::future::{Ready, ready};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::body::{Body, to_bytes};
@@ -33,15 +31,15 @@ struct EchoOutput {
     correlation_id: Option<String>,
 }
 
-async fn echo<P: Send + Sync + 'static>(
+fn echo<P: Send + Sync + 'static>(
     input: EchoInput, context: Context<P>,
-) -> Result<EchoOutput, omnia_guest::Error> {
-    Ok(EchoOutput {
+) -> Ready<Result<EchoOutput, omnia_guest::Error>> {
+    ready(Ok(EchoOutput {
         name: input.name,
         count: input.count.unwrap_or(1),
         owner: context.owner().to_owned(),
-        correlation_id: context.metadata.correlation_id.clone(),
-    })
+        correlation_id: context.metadata.correlation_id,
+    }))
 }
 
 struct StatefulProvider {
@@ -50,6 +48,7 @@ struct StatefulProvider {
 
 #[derive(Serialize)]
 struct ProviderObservation {
+    name: String,
     address: usize,
     call: usize,
 }
@@ -57,16 +56,6 @@ struct ProviderObservation {
 #[derive(Debug, Deserialize)]
 struct ObserveInput {
     name: String,
-}
-
-async fn observe(
-    input: ObserveInput, context: Context<StatefulProvider>,
-) -> Result<ProviderObservation, omnia_guest::Error> {
-    let _ = input.name;
-    Ok(ProviderObservation {
-        address: std::ptr::from_ref(context.provider()).addr(),
-        call: context.provider().calls.fetch_add(1, Ordering::SeqCst) + 1,
-    })
 }
 
 fn router() -> axum::Router {
@@ -277,6 +266,13 @@ async fn unregistered_method() {
 
 #[tokio::test]
 async fn route_state_clones_share_provider() {
+    let observe = |input: ObserveInput, context: Context<StatefulProvider>| {
+        ready(Ok::<_, omnia_guest::Error>(ProviderObservation {
+            name: input.name,
+            address: std::ptr::from_ref(context.provider()).addr(),
+            call: context.provider().calls.fetch_add(1, Ordering::SeqCst) + 1,
+        }))
+    };
     let router = axum::Router::new()
         .route("/first", get(observe))
         .route("/second", get(observe))
@@ -312,6 +308,8 @@ async fn route_state_clones_share_provider() {
     )
     .expect("decode second body");
 
+    assert_eq!(first["name"], "first");
+    assert_eq!(second["name"], "second");
     assert_eq!(first["address"], second["address"]);
     assert_eq!(first["call"], 1);
     assert_eq!(second["call"], 2);
@@ -397,11 +395,10 @@ struct RawText {
     text: String,
 }
 
-async fn raw_text<P: Send + Sync + 'static>(
+fn raw_text<P: Send + Sync + 'static>(
     input: RawText, _context: Context<P>,
-) -> Result<(), omnia_guest::Error> {
-    let _ = input.text;
-    Ok(())
+) -> Ready<Result<String, omnia_guest::Error>> {
+    ready(Ok(input.text))
 }
 
 #[tokio::test]
@@ -428,10 +425,11 @@ struct JoinNames {
     names: Vec<String>,
 }
 
-async fn join_names<P: Send + Sync + 'static>(
+fn join_names<P: Send + Sync + 'static>(
     input: JoinNames, _context: Context<P>,
-) -> Result<String, omnia_guest::Error> {
-    Ok(input.names.join(" & "))
+) -> Ready<Result<String, omnia_guest::Error>> {
+    let JoinNames { names } = input;
+    ready(Ok(names.join(" & ")))
 }
 
 #[derive(Debug)]
@@ -440,10 +438,11 @@ struct Greet {
     greeting: String,
 }
 
-async fn greet<P: Send + Sync + 'static>(
+fn greet<P: Send + Sync + 'static>(
     input: Greet, _context: Context<P>,
-) -> Result<String, omnia_guest::Error> {
-    Ok(format!("{}, {}", input.greeting, input.name))
+) -> Ready<Result<String, omnia_guest::Error>> {
+    let Greet { name, greeting } = input;
+    ready(Ok(format!("{greeting}, {name}")))
 }
 
 fn text_response(body: String) -> Response {
@@ -591,10 +590,11 @@ impl From<EmptyName> for HttpError {
     }
 }
 
-async fn xml_greet<P: Send + Sync + 'static>(
+fn xml_greet<P: Send + Sync + 'static>(
     input: XmlGreet, _context: Context<P>,
-) -> Result<String, EmptyName> {
-    if input.name.is_empty() { Err(EmptyName) } else { Ok(format!("hello, {}", input.name)) }
+) -> Ready<Result<String, EmptyName>> {
+    let XmlGreet { name } = input;
+    ready(if name.is_empty() { Err(EmptyName) } else { Ok(format!("hello, {name}")) })
 }
 
 fn parse_greet(headers: &HeaderMap, body: &[u8]) -> Result<XmlGreet, DecodeError> {

@@ -133,6 +133,18 @@
   re-exported so `connect_with` can be called with fixed options instead of
   `connect()` reading `HTTP_CONNECT_TIMEOUT` / `SQL_DATABASE`.
 
+- Transport-neutral failure and encoding surface in `omnia_guest::api`:
+  `ErrorBody { error, message }` is the one wire body for a failed
+  invocation (`From<&Error>`: `code()` → `error`, `description()` →
+  `message`); `Error::exit_code()` sits beside `Error::status()` with the
+  1:1 exit map (`BadRequest` 1, `NotFound` 2, `ServerError` 3,
+  `BadGateway` 4); `Format { Text, Json }` with
+  `Format::encode(&body, render)` produces an `Encoded { bytes, media_type }`
+  — text through a `Fn(&T, &mut dyn fmt::Write) -> fmt::Result` render
+  closure as `text/plain; charset=utf-8`, or pretty JSON with a trailing
+  newline as `application/json` — and `Encoded` implements axum's
+  `IntoResponse` (200 with the media type as `Content-Type`).
+
 ### Changed
 
 - Guest handlers are fns bound at the route, over an owned context.
@@ -477,6 +489,14 @@
   and `DeploymentBuilder::dynamic()` are the way a registry grows after
   boot, with registered guests reachable via host-mediated link dispatch
   and `Dispatcher::invoke`
+- `HttpError::from(omnia_guest::Error)` now emits the JSON `ErrorBody`
+  (`{"error":"<code>","message":"<description>"}`, `application/json`) at
+  the variant's status instead of a plain-text `code: …, description: …`
+  body, so HTTP clients read the same `error` discriminant every transport
+  emits. This also covers `From<DecodeError>` (400 with
+  `error == "invalid_request"`) and the `anyhow::Error` conversion when its
+  chain contains an `omnia_guest::Error`; a foreign `anyhow` error still
+  produces a plain-text 500.
 
 ## 0.35.0
 

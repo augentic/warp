@@ -13,7 +13,8 @@ use omnia_guest::api::http::{
 use omnia_guest::api::messaging::{
     Delivery, DeliveryError, Router as MessagingRouter, consume, consume_with,
 };
-use omnia_guest::api::{Client, Context, DecodeError, Metadata};
+use omnia_guest::api::{Client, Context, DecodeError, ErrorBody, Format, Metadata};
+use omnia_guest::not_found;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt as _;
 
@@ -669,8 +670,116 @@ async fn xml_handler_error() {
 
 #[tokio::test]
 async fn xml_malformed_body() {
-    let (status, content_type, _) = send_raw(xml_router(), xml_request("<greet>")).await;
+    let (status, content_type, body) = send_raw(xml_router(), xml_request("<greet>")).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(content_type.as_deref(), Some("application/json"));
+    let body: ErrorBody = serde_json::from_str(&body).expect("decode error body");
+    assert_eq!(body.error, "invalid_request");
+    assert_eq!(body.message, "malformed greet document");
+}
+
+#[derive(Debug, Deserialize)]
+struct Lookup {
+    id: String,
+}
+
+fn lookup<P: Send + Sync + 'static>(
+    input: Lookup, _context: Context<P>,
+) -> Ready<Result<String, omnia_guest::Error>> {
+    let Lookup { id } = input;
+    ready(Err(not_found!("no item {id}")))
+}
+
+#[tokio::test]
+async fn error_body_json() {
+    let router =
+        axum::Router::new().route("/items", get(lookup)).with_state(Client::new("test", ()));
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/items?id=42")
+        .body(Body::empty())
+        .expect("build request");
+    let (status, content_type, body) = send_raw(router, request).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(content_type.as_deref(), Some("application/json"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).expect("decode error body"),
+        serde_json::json!({ "error": "not_found", "message": "no item 42" })
+    );
+}
+
+#[derive(Debug, Serialize)]
+struct Summary {
+    name: String,
+    count: u32,
+}
+
+fn render_summary(summary: &Summary, out: &mut dyn std::fmt::Write) -> std::fmt::Result {
+    write!(out, "{} x{}", summary.name, summary.count)
+}
+
+#[test]
+fn format_encode_text_and_json() {
+    let summary = Summary {
+        name: "widget".to_string(),
+        count: 3,
+    };
+
+    let text = Format::Text.encode(&summary, render_summary);
+    assert_eq!(text.media_type, "text/plain; charset=utf-8");
+    assert_eq!(text.bytes, b"widget x3");
+
+    let json = Format::Json.encode(&summary, render_summary);
+    assert_eq!(json.media_type, "application/json");
+    let json = String::from_utf8(json.bytes).expect("json is utf-8");
+    assert!(json.ends_with('\n'));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).expect("decode json"),
+        serde_json::json!({ "name": "widget", "count": 3 })
+    );
+}
+
+#[derive(Debug, Deserialize)]
+struct Summarize {
+    name: String,
+    count: u32,
+}
+
+fn summarize<P: Send + Sync + 'static>(
+    input: Summarize, _context: Context<P>,
+) -> Ready<Result<Summary, omnia_guest::Error>> {
+    ready(Ok(Summary {
+        name: input.name,
+        count: input.count,
+    }))
+}
+
+#[tokio::test]
+async fn encoded_into_response() {
+    let router = axum::Router::new()
+        .route(
+            "/summary",
+            handle_with(
+                MethodFilter::GET,
+                summarize,
+                |raw: RawRequest<'_>| {
+                    serde_urlencoded::from_str::<Summarize>(raw.query.unwrap_or_default())
+                        .map_err(|error| DecodeError::new(error.to_string()))
+                },
+                |summary: Summary| Format::Text.encode(&summary, render_summary).into_response(),
+            ),
+        )
+        .with_state(Client::new("test", ()));
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/summary?name=widget&count=3")
+        .body(Body::empty())
+        .expect("build request");
+    let (status, content_type, body) = send_raw(router, request).await;
+
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
+    assert_eq!(body, "widget x3");
 }

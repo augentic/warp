@@ -25,7 +25,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use crate::api::DecodeError;
-use crate::api::{Client, Handler, Metadata};
+use crate::api::{Client, Encoded, ErrorBody, Handler, Metadata};
 
 /// Result type for HTTP handlers.
 pub type HttpResult<T, E = HttpError> = Result<T, E>;
@@ -70,9 +70,13 @@ impl HttpError {
     }
 }
 
+// Carries the same `error` discriminant every transport emits, so a client
+// classifies failures identically over HTTP and the command line.
 impl From<crate::Error> for HttpError {
     fn from(error: crate::Error) -> Self {
-        Self::new(error.status(), error.to_string())
+        let body =
+            serde_json::to_vec(&ErrorBody::from(&error)).expect("a two-string struct serializes");
+        Self::with_body(error.status(), HeaderValue::from_static("application/json"), body)
     }
 }
 
@@ -98,6 +102,13 @@ impl IntoResponse for HttpError {
             }
             None => (self.status, self.error).into_response(),
         }
+    }
+}
+
+impl IntoResponse for Encoded {
+    fn into_response(self) -> Response {
+        (StatusCode::OK, [(CONTENT_TYPE, HeaderValue::from_static(self.media_type))], self.bytes)
+            .into_response()
     }
 }
 

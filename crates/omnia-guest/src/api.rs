@@ -31,6 +31,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use serde::{Deserialize, Serialize};
+
 /// WASI CLI entrypoint helper.
 #[cfg(target_arch = "wasm32")]
 pub mod command;
@@ -66,6 +68,77 @@ impl fmt::Display for DecodeError {
 }
 
 impl Error for DecodeError {}
+
+/// The transport-neutral wire body of a failed invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorBody {
+    /// The error code discriminant.
+    pub error: String,
+
+    /// The human-readable error description.
+    pub message: String,
+}
+
+impl From<&crate::Error> for ErrorBody {
+    fn from(error: &crate::Error) -> Self {
+        Self {
+            error: error.code(),
+            message: error.description(),
+        }
+    }
+}
+
+/// The wire format a handler output is encoded into.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Format {
+    /// Human-readable text produced by a render fn.
+    Text,
+
+    /// Pretty-printed JSON with a trailing newline.
+    Json,
+}
+
+/// An encoded body with its media type.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Encoded {
+    /// The encoded body bytes.
+    pub bytes: Vec<u8>,
+
+    /// The media type describing `bytes`.
+    pub media_type: &'static str,
+}
+
+impl Format {
+    /// Encode a body, rendering it through `render` for [`Format::Text`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `render` reports an error (a `String` sink never does) or
+    /// `body` fails to serialize; both are invariant violations for a
+    /// derived DTO encoded into memory, not runtime conditions.
+    pub fn encode<T: Serialize>(
+        self, body: &T, render: impl Fn(&T, &mut dyn fmt::Write) -> fmt::Result,
+    ) -> Encoded {
+        match self {
+            Self::Text => {
+                let mut out = String::new();
+                render(body, &mut out).expect("a String sink never fails");
+                Encoded {
+                    bytes: out.into_bytes(),
+                    media_type: "text/plain; charset=utf-8",
+                }
+            }
+            Self::Json => {
+                let mut bytes = serde_json::to_vec_pretty(body).expect("a derived DTO serializes");
+                bytes.push(b'\n');
+                Encoded {
+                    bytes,
+                    media_type: "application/json",
+                }
+            }
+        }
+    }
+}
 
 /// Transport-neutral invocation metadata.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

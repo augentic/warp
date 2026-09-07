@@ -14,7 +14,6 @@ pub mod document_store {
     pub use omnia_wasi_docstore::document_store::*;
 }
 
-pub use omnia_guest_macros::handler;
 #[doc(hidden)]
 pub use {anyhow, axum, bytes, http, http_body, tracing};
 #[cfg(target_arch = "wasm32")]

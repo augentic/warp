@@ -145,7 +145,16 @@
   newline as `application/json` — and `Encoded` implements axum's
   `IntoResponse` (200 with the media type as `Content-Type`).
 
+- `omnia-guest` `command` feature (`clap` + `clap_complete`) for the
+  clap-backed `api::command` façade; `api::Format` derives
+  `clap::ValueEnum` under it so a `--format text|json` argument parses
+  directly.
+
 ### Changed
+
+- `omnia_guest::api::command` compiles on every target: only `execute_wasi`
+  (the `wasi:cli/run` driver) stays wasm32-only, so `command!` and
+  `IntoExit` are testable natively.
 
 - Guest handlers are fns bound at the route, over an owned context.
   `omnia_guest::api::Context<P>` drops its lifetime and `Copy`: it owns

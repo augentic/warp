@@ -1,10 +1,13 @@
 //! WASI CLI glue for guest command entrypoints.
 
+#[cfg(target_arch = "wasm32")]
 use std::future::Future;
+#[cfg(target_arch = "wasm32")]
 use std::io::Write as _;
 
 /// Wires an `async fn` as the guest's `wasi:cli/run` export, driven through
-/// [`execute_wasi`] so telemetry is initialized and flushed around it.
+/// `execute_wasi` (wasm32 only) so telemetry is initialized and flushed
+/// around it.
 ///
 /// The entry returns `()` (a scenario that asserts internally and traps on
 /// failure) or `Result<(), u8>` (a CLI reporting an exit status); see
@@ -39,7 +42,11 @@ macro_rules! command {
 /// The exit status a [`command!`](crate::command) entry yields: `()` always
 /// succeeds and `Result<(), u8>` passes its code through.
 pub trait IntoExit {
-    /// The status handed to [`execute_wasi`].
+    /// The status handed to the WASI CLI boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the non-zero exit code the guest reports.
     fn into_exit(self) -> Result<(), u8>;
 }
 
@@ -65,6 +72,7 @@ impl IntoExit for Result<(), u8> {
 ///
 /// Returns `Ok(())` when `run` succeeds. A non-zero status is reported
 /// through `wasi:cli/exit` and does not return.
+#[cfg(target_arch = "wasm32")]
 #[expect(clippy::result_unit_err, reason = "matches the wasi:cli/run contract")]
 pub async fn execute_wasi(run: impl Future<Output = Result<(), u8>>) -> Result<(), ()> {
     let guard = omnia_wasi_otel::init();

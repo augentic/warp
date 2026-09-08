@@ -68,6 +68,7 @@ install_crate = "cargo-udeps"
 script = '''
 cargo clippy -p omnia -p omnia-wasi-sql -p omnia-wasi-identity -p omnia-guest --no-default-features --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features cli --all-targets -- -D warnings
+cargo clippy -p omnia-guest --no-default-features --features command --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features jit --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features otlp --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features plugin --all-targets -- -D warnings

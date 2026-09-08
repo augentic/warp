@@ -34,7 +34,6 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 /// WASI CLI entrypoint helper.
-#[cfg(target_arch = "wasm32")]
 pub mod command;
 pub mod http;
 /// Typed exact-topic messaging routing.
@@ -90,6 +89,7 @@ impl From<&crate::Error> for ErrorBody {
 
 /// The wire format a handler output is encoded into.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "command", derive(clap::ValueEnum))]
 pub enum Format {
     /// Human-readable text produced by a render fn.
     Text,

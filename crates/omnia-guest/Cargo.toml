@@ -20,12 +20,18 @@ default = ["orm"]
 # document-store re-exports.
 orm = ["dep:omnia-wasi-docstore", "dep:omnia-wasi-sql", "dep:sea-query"]
 
+# Enables the clap-backed `api::command` façade (argv parsing, `--format`,
+# shell completions).
+command = ["dep:clap", "dep:clap_complete"]
+
 [dependencies]
 anyhow.workspace = true
 axum = { workspace = true, features = ["json"] }
 bon.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+clap = { workspace = true, optional = true }
+clap_complete = { workspace = true, optional = true }
 http.workspace = true
 http-body.workspace = true
 omnia-wasi-sql = { workspace = true, optional = true }

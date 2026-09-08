@@ -96,10 +96,7 @@ macro_rules! command {
 
         impl $crate::wasip3::exports::cli::run::Guest for CliGuest {
             async fn run() -> ::core::result::Result<(), ()> {
-                $crate::api::command::execute_wasi(async {
-                    $crate::api::command::IntoExit::into_exit($entry().await)
-                })
-                .await;
+                $crate::api::command::execute_wasi($entry()).await;
                 Ok(())
             }
         }
@@ -393,16 +390,16 @@ pub fn completions<A: clap::CommandFactory>(shell: Shell, name: &str) -> Respons
     Response::success(out)
 }
 
-/// Execute a guest command at the WASI CLI boundary.
+/// Execute a guest command entry at the WASI CLI boundary.
 ///
-/// Initializes guest telemetry, awaits `run`, and flushes telemetry and
-/// stdout. The guest writes its own output; a non-zero status then exits
-/// with that exact code through `wasi:cli/exit` and does not return.
+/// Initializes guest telemetry, awaits `entry`, and flushes telemetry and
+/// stdout. The entry yields any [`IntoExit`] outcome; a non-zero status then
+/// exits with that exact code through `wasi:cli/exit` and does not return.
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
-pub async fn execute_wasi(run: impl Future<Output = Result<(), u8>>) {
+pub async fn execute_wasi<E: IntoExit>(entry: impl Future<Output = E>) {
     let guard = omnia_wasi_otel::init();
-    let result = run.await;
+    let result = entry.await.into_exit();
     // `exit-with-code` does not return (analogous to a trap), so no
     // `Drop` runs past it: flush telemetry as soon as the run completes.
     omnia_wasi_otel::flush_guard(guard).await;

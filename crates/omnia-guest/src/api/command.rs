@@ -1,4 +1,35 @@
-//! WASI CLI glue for guest command entrypoints.
+//! The command façade: argv in, buffered channels and an exit status out.
+//!
+//! The command-line mirror of [`api::http`](crate::api::http) over the same
+//! [`Client`]: [`parse`] classifies argv into the grammar or one of clap's
+//! own complete responses, and [`Command`] projects each verb — decode →
+//! [`Client::call`] → encode — onto a [`Response`]. A success body rides
+//! stdout in the selected [`Format`]; a [`Failure`] envelope rides stderr
+//! with the exit status from [`Error::exit_code`](crate::Error::exit_code),
+//! and a clap usage error exits [`USAGE_EXIT`]. [`command!`](crate::command)
+//! binds an `async fn main() -> Response` as the `wasi:cli/run` export and
+//! [`IntoExit`] writes the channels at that boundary.
+//!
+//! ```rust,ignore
+//! use omnia_guest::api::command::{Command, Parsed, Response, parse};
+//! use omnia_guest::api::{Client, Metadata};
+//!
+//! omnia_guest::command!(main);
+//!
+//! async fn main() -> Response {
+//!     let app = match parse::<App>(wasip3::cli::environment::get_arguments()) {
+//!         Parsed::App(app) => app,
+//!         Parsed::Display(text) => return Response::success(text),
+//!         Parsed::Usage(error) => return Response::usage(&error),
+//!     };
+//!     let client = Client::new("app", Provider);
+//!     let metadata = Metadata::default();
+//!     let command = Command::new(&client, &metadata, app.format);
+//!     match app.verb {
+//!         Verb::Greet { name } => command.call(greet, || Ok(Greet { name }), render_greeting).await,
+//!     }
+//! }
+//! ```
 
 use std::borrow::Cow;
 #[cfg(feature = "command")]
@@ -12,7 +43,7 @@ use std::io::{ErrorKind, Write};
 pub use clap_complete::Shell;
 use serde::{Serialize, Serializer};
 
-use crate::api::ErrorBody;
+use crate::api::{Client, ErrorBody, Format, Handler, Metadata};
 
 /// The exit status of a command-line usage error (`EX_USAGE`).
 pub const USAGE_EXIT: u8 = 64;
@@ -21,16 +52,22 @@ pub const USAGE_EXIT: u8 = 64;
 /// `execute_wasi` (wasm32 only) so telemetry is initialized and flushed
 /// around it.
 ///
-/// The entry returns `()` (a scenario that asserts internally and traps on
-/// failure), `Result<(), u8>` (a CLI reporting an exit status), or a
-/// [`Response`] (buffered channels plus exit status); see [`IntoExit`].
+/// The entry returns a [`Response`] (buffered channels plus exit status, the
+/// façade's shape), `Result<(), u8>` (a CLI that writes its own channels and
+/// reports an exit status), or `()` (a scenario that asserts internally and
+/// traps on failure); see [`IntoExit`].
 ///
 /// ```rust,ignore
+/// use omnia_guest::api::command::{Parsed, Response, parse};
+///
 /// omnia_guest::command!(main);
 ///
-/// async fn main() -> Result<(), u8> {
-///     println!("hello");
-///     Ok(())
+/// async fn main() -> Response {
+///     match parse::<App>(wasip3::cli::environment::get_arguments()) {
+///         Parsed::App(app) => dispatch(app).await,
+///         Parsed::Display(text) => Response::success(text),
+///         Parsed::Usage(error) => Response::usage(&error),
+///     }
 /// }
 /// ```
 #[macro_export]
@@ -227,6 +264,79 @@ impl Serialize for Failure {
             hint: self.hint(),
         }
         .serialize(serializer)
+    }
+}
+
+type HintFn<'a> = Box<dyn Fn(&crate::Error) -> Option<Cow<'static, str>> + Send + Sync + 'a>;
+
+/// The command projector: decode → [`Client::call`] → encode onto a
+/// [`Response`], with the [`Failure`] envelope on stderr.
+pub struct Command<'a, P> {
+    client: &'a Client<P>,
+    metadata: &'a Metadata,
+    format: Format,
+    hint: Option<HintFn<'a>>,
+}
+
+impl<'a, P: Send + Sync + 'static> Command<'a, P> {
+    /// Project verbs over `client` with `metadata`, encoding bodies as
+    /// `format`.
+    #[must_use]
+    pub const fn new(client: &'a Client<P>, metadata: &'a Metadata, format: Format) -> Self {
+        Self {
+            client,
+            metadata,
+            format,
+            hint: None,
+        }
+    }
+
+    /// Attach a remedy-hint fn consulted for every failure that carries no
+    /// hint of its own.
+    #[must_use]
+    pub fn hints(
+        mut self, hint: impl Fn(&crate::Error) -> Option<Cow<'static, str>> + Send + Sync + 'a,
+    ) -> Self {
+        self.hint = Some(Box::new(hint));
+        self
+    }
+
+    /// Run one verb: `decode` the input, invoke `handler` through the
+    /// client, and encode the output (`render` is its text form).
+    pub async fn call<F, I, D, R>(&self, handler: F, decode: D, render: R) -> Response
+    where
+        F: Handler<P, I>,
+        F::Output: Serialize,
+        F::Error: Into<Failure>,
+        D: FnOnce() -> Result<I, crate::Error>,
+        R: Fn(&F::Output, &mut dyn fmt::Write) -> fmt::Result,
+    {
+        let input = match decode() {
+            Ok(input) => input,
+            Err(error) => return self.refuse(Failure::from(error)),
+        };
+        match self.client.call(handler, input, self.metadata).await {
+            Ok(output) => Response::success(self.format.encode(&output, render).bytes),
+            Err(error) => self.refuse(error.into()),
+        }
+    }
+
+    fn refuse(&self, mut failure: Failure) -> Response {
+        if failure.hint.is_none()
+            && let Some(hint) = &self.hint
+        {
+            failure.hint = hint(&failure.error);
+        }
+        Response::failure(self.format.encode(&failure, Failure::text).bytes, failure.exit_code())
+    }
+}
+
+impl<P> fmt::Debug for Command<'_, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Command")
+            .field("format", &self.format)
+            .field("hint", &self.hint.is_some())
+            .finish_non_exhaustive()
     }
 }
 

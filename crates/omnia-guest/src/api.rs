@@ -33,7 +33,6 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-/// WASI CLI entrypoint helper.
 pub mod command;
 pub mod http;
 /// Typed exact-topic messaging routing.

@@ -168,6 +168,21 @@
   at `USAGE_EXIT`, `completions::<App>(shell, name)` produces a
   shell-completion script, and `clap_complete::Shell` is re-exported.
 
+- The command projector `omnia_guest::api::command::Command<'a, P>`, the
+  command-line mirror of `api::http` over the same `Client`:
+  `Command::new(&client, &metadata, format)` then
+  `command.call(handler, decode, render).await -> Response` runs one verb
+  as decode → `Client::call` → encode. `decode: FnOnce() -> Result<I, Error>`
+  builds the handler input from the parsed grammar; a success body is
+  encoded through `Format::encode` (with `render` as its text form) onto
+  stdout at exit 0; a decode or handler error (`F::Error: Into<Failure>`)
+  becomes the `Failure` envelope on stderr at `Error::exit_code()`, in the
+  same `Format` (`error[<code>]: <message>` text or the flat JSON). An
+  optional `.hints(|error| ..)` fn attaches a remedy hint to every failure
+  that carries none. The projector needs no clap, so it compiles without
+  the `command` feature. The module and `command!` docs now describe the
+  façade shape: `command!(main)` over an `async fn main() -> Response`.
+
 ### Changed
 
 - `omnia_guest::api::command` compiles on every target: only `execute_wasi`

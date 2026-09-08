@@ -201,3 +201,8 @@ crate-type = ["cdylib"]
 name = "plugins_load_registry"
 path = "programs/plugins/load_registry.rs"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "plugins_load_unlinked"
+path = "programs/plugins/load_unlinked.rs"
+crate-type = ["cdylib"]

@@ -7,7 +7,7 @@ use std::sync::{Arc, Weak};
 
 use anyhow::{Context as _, Result};
 use wasmtime::Store;
-use wasmtime::component::{Component, Instance, InstancePre, types};
+use wasmtime::component::{Component, Instance, InstancePre};
 
 use crate::artifact::GuestArtifact;
 use crate::dispatch::serve_guest;
@@ -146,9 +146,6 @@ pub enum AdmitError {
     /// The bytes are a native artifact, not a valid raw wasm component, or
     /// failed pre-instantiation against the deployment's host set.
     ArtifactRefused(String),
-    /// The component exports no interface declared in the deployment's
-    /// link seam list.
-    SeamMissing(String),
     /// The identity is already registered — an earlier or racing
     /// registration holds it.
     AlreadyRegistered(String),
@@ -160,7 +157,6 @@ impl fmt::Display for AdmitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ArtifactRefused(reason)
-            | Self::SeamMissing(reason)
             | Self::AlreadyRegistered(reason)
             | Self::Internal(reason) => f.write_str(reason),
         }
@@ -411,10 +407,12 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
 
     /// Admit raw wasm bytes as a late guest: refuse a native (pre-compiled)
     /// artifact before wasmtime sees the bytes, validate on the safe path,
-    /// require an export of a declared link interface, then register and
-    /// serve the component under `id` — the privileged registration half
-    /// behind the `omnia:plugins/loader` capability. Acquisition, digest
-    /// policy, and idempotency live with the loader (`omnia-plugin`).
+    /// then register and serve the component under `id` — the privileged
+    /// registration half behind the `omnia:plugins/loader` capability.
+    /// Acquisition, digest policy, and idempotency live with the loader
+    /// (`omnia-plugin`). Whether the component exports a linked interface is
+    /// not checked here: a guest that exports none is still reachable through
+    /// the host [`Dispatcher`], and a link call to it fails at the call site.
     ///
     /// The registry entry records the content digest of `bytes`, so the
     /// attestation lives exactly as long as the entry —
@@ -423,8 +421,8 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
     /// # Errors
     ///
     /// Returns a typed [`AdmitError`] naming the refusal: refused artifact,
-    /// missing seam export, an identity already registered (an earlier or
-    /// racing registration), or an internal serve/publication failure.
+    /// an identity already registered (an earlier or racing registration), or
+    /// an internal serve/publication failure.
     pub async fn admit(&self, id: GuestId, bytes: Vec<u8>) -> Result<(), AdmitError> {
         let digest: std::sync::Arc<str> = std::sync::Arc::from(crate::sha256_digest(&bytes));
 
@@ -433,8 +431,6 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
             GuestArtifact::wasm(bytes).load(self.registry().engine()).await.map_err(|error| {
                 AdmitError::ArtifactRefused(format!("validating `{id}`: {error:#}"))
             })?;
-
-        self.check_seam_export(&id, &component)?;
 
         // The same publish sequence as `Runtime::register`: pre-instantiate
         // against the shared host set, wire seam exports, publish atomically.
@@ -456,32 +452,6 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
 
         tracing::debug!(guest = %id, "late guest admitted");
         Ok(())
-    }
-
-    /// Refuse a component that exports no interface from the deployment's
-    /// declared link seam list.
-    fn check_seam_export(&self, id: &GuestId, component: &Component) -> Result<(), AdmitError> {
-        let links = self.registry().dispatch().links();
-        if links.is_empty() {
-            return Err(AdmitError::SeamMissing(format!(
-                "cannot admit `{id}`: this deployment declares no link interfaces"
-            )));
-        }
-        let engine = self.registry().engine();
-        let exports_seam =
-            component.component_type().exports(engine).any(|(interface, extern_)| {
-                links.contains(interface)
-                    && matches!(extern_.ty, types::ComponentItem::ComponentInstance(_))
-            });
-        if exports_seam {
-            Ok(())
-        } else {
-            let declared: Vec<&str> = links.iter().map(AsRef::as_ref).collect();
-            Err(AdmitError::SeamMissing(format!(
-                "`{id}` exports none of the declared link interfaces ({})",
-                declared.join(", ")
-            )))
-        }
     }
 
     /// Remove a dynamically registered guest. New dispatches to `id` fail as

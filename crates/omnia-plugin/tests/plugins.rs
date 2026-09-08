@@ -178,9 +178,6 @@ async fn plugins_load_refused() {
     let scratch = scratch();
     std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
         .expect("staging the loadable echoer");
-    // Exports no `omnia-test:link/ops` instance — the seam-missing target.
-    std::fs::copy(test_programs::LINK_FULL, scratch.path().join("noseam.wasm"))
-        .expect("staging the seamless component");
     // Leading ELF magic is exactly what the loader sniffs; the tail is junk,
     // proving refusal happens before any wasmtime parsing.
     std::fs::write(scratch.path().join("native.bin"), [0x7f, b'E', b'L', b'F', 0, 0, 0, 0])
@@ -195,6 +192,35 @@ async fn plugins_load_refused() {
     .await
     .expect("deployment runs");
     assert_eq!(status, ExitStatus::SUCCESS, "the requester's assertions all held");
+}
+
+// Admission no longer requires a linked export: a component exporting no
+// `omnia-test:link/ops` loads (it stays reachable through the host
+// `Dispatcher`), and a link call to it fails at the call site — the polyfill
+// traps the requester, so the failure is observed here, after the load.
+#[tokio::test]
+async fn plugins_load_unlinked() {
+    let scratch = scratch();
+    std::fs::copy(test_programs::LINK_FULL, scratch.path().join("noseam.wasm"))
+        .expect("staging the unlinked component");
+
+    let runtime = requester_runtime(
+        test_programs::PLUGINS_LOAD_UNLINKED,
+        &scratch,
+        None,
+        Some(path_source(&scratch)),
+    )
+    .await
+    .expect("assembling runtime");
+
+    let error = runtime.run_command().await.expect_err("the link call traps the requester");
+    assert!(
+        runtime.registry().get(&"test:unlinked".into()).is_some(),
+        "the load succeeded before the call failed: {error:#}"
+    );
+    let detail = format!("{error:#}");
+    assert!(detail.contains("test:unlinked"), "the trap names the unlinked target: {detail}");
+    runtime.shutdown();
 }
 
 /// A wasm custom section (id 0) named `omnia-test` wrapping `payload`:

@@ -16,9 +16,8 @@ interface loader {
     variant error {
         /// The request or deployment is wrong and a retry cannot succeed:
         /// an unserved location kind, a malformed or mismatched digest pin,
-        /// bytes that are not a raw wasm component (a pre-compiled native
-        /// artifact is always refused) or failed validation, or a component
-        /// exporting no interface from the deployment's plugin seam list.
+        /// or bytes that are not a raw wasm component (a pre-compiled native
+        /// artifact is always refused) or failed validation.
         refused(string),
         /// The acquirer could not produce the package bytes; the source may
         /// recover, so a retry can succeed.
@@ -32,7 +31,8 @@ interface loader {
     /// A loaded plugin: a plain value, because the requester holds no
     /// lifecycle authority over the loaded component.
     record plugin {
-        /// The routed identity host-mediated dispatch keys on.
+        /// The registered guest identity (routes both link dispatch and the
+        /// host Dispatcher).
         id: string,
         /// The resolved `sha256:<hex>` content digest of the loaded bytes —
         /// commit it as a pin to make an unpinned load reproducible.
@@ -42,8 +42,7 @@ interface loader {
     /// Load `package`, idempotent on (package, digest): an already-active
     /// package returns its handle immediately. The host acquires through the
     /// builder-supplied acquirer, verifies the sha256 pin when given,
-    /// validates raw wasm, checks the component exports a declared plugin
-    /// seam, and registers under `package`.
+    /// validates raw wasm, and registers under `package`.
     load: async func(%package: string, %from: location, digest: option<string>) -> result<plugin, error>;
 }
 

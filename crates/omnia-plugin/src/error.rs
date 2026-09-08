@@ -49,9 +49,7 @@ impl std::error::Error for LoadError {}
 impl From<AdmitError> for LoadError {
     fn from(error: AdmitError) -> Self {
         match error {
-            AdmitError::ArtifactRefused(reason) | AdmitError::SeamMissing(reason) => {
-                Self::Refused(reason)
-            }
+            AdmitError::ArtifactRefused(reason) => Self::Refused(reason),
             AdmitError::AlreadyRegistered(reason) => Self::AlreadyActive(reason),
             AdmitError::Internal(reason) => Self::Internal(reason),
         }

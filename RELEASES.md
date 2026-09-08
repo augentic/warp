@@ -197,6 +197,15 @@
   `HttpRequest` capability, `Error::status()`, and `api::messaging` stay
   unconditional.
 
+- An e2e `command` group in `crates/test-programs` (`command/exit_map`, a
+  `command!` guest on `parse` → `Command::call` over `Metadata::from_env`)
+  driven by `crates/omnia-test/tests/command.rs` through
+  `test_programs::foreach_command!`, proving the façade's exit plumbing
+  through the real runtime: a handler's error class reaches the host as its
+  mapped status (`bad_request!` 1, `not_found!` 2, `bad_gateway!` 4, success
+  0) and an unknown verb exits `USAGE_EXIT` (64). `test-programs`' wasm32
+  build now enables `omnia-guest`'s `command` feature and depends on `clap`.
+
 ### Changed
 
 - Every invocation is observable. `Metadata::from_lookup` mints a request id

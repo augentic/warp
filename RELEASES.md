@@ -225,8 +225,9 @@
   produces a plain-text 500.
 
 - `omnia_guest::api::command` compiles on every target: only `execute_wasi`
-  (the `wasi:cli/run` driver) stays wasm32-only, so `command!`, `IntoExit`,
-  `Command`, `Response`, and `Failure` are testable natively.
+  (the `wasi:cli/run` driver) and the `command!` macro that expands to it
+  stay wasm32-only, so `IntoExit`, `Command`, `Response`, and `Failure` are
+  testable natively.
 
 - `omnia-guest` defaults are now `["orm", "http"]`. A guest that already
   disables default features and routes HTTP must add `features = ["http"]`;

@@ -134,8 +134,10 @@ See the [workspace documentation](https://github.com/augentic/omnia) for the ful
 ## Cargo features
 
 - `orm` *(default)*: the SQL ORM, table/document capabilities, and document-store re-exports.
+- `http` *(default)*: the axum-backed `api::http` routing, the `mcp` server, and the `HttpError` / `HttpResult` root re-exports. The outbound `HttpRequest` capability and `Error::status()` need no feature.
+- `command`: the clap-backed parts of `api::command` (`parse`, `completions`, the `clap::ValueEnum` derive on `api::Format`).
 
-Guests that do not use SQL or documents can disable defaults to shrink wasm build time and size.
+Guests that do not use SQL, documents, or inbound HTTP can disable defaults to shrink wasm build time and size.
 
 ## License
 

@@ -7,17 +7,13 @@ use std::borrow::Cow;
 use std::fmt;
 use std::future::{Ready, ready};
 
-use axum::body::{Body, to_bytes};
 use clap::{Parser, Subcommand};
-use http::{Request, StatusCode};
 use omnia_guest::api::command::{
     Command, Failure, IntoExit, Parsed, Response, Shell, USAGE_EXIT, completions, parse,
 };
-use omnia_guest::api::http::get;
-use omnia_guest::api::{Client, Context, ErrorBody, Format, Metadata};
+use omnia_guest::api::{Client, Context, Format, Metadata};
 use omnia_guest::{bad_request, not_found};
 use serde::{Deserialize, Serialize};
-use tower::ServiceExt as _;
 
 #[derive(Debug, Parser)]
 #[command(name = "app", bin_name = "app", version = "1.2.3", subcommand_required = true)]
@@ -324,25 +320,37 @@ async fn hints_apply_by_error() {
     assert_eq!(unhinted.stderr, b"error[bad_request]: name is required\n");
 }
 
-#[tokio::test]
-async fn handler_error_shares_http_discriminant() {
-    let client = Client::new("app", ());
-    let metadata = Metadata::default();
-    let response = Command::new(&client, &metadata, Format::Json)
-        .call(lookup, || Ok(item("42")), render_never)
-        .await;
-    let command_body: ErrorBody =
-        serde_json::from_slice(&response.stderr).expect("stderr carries an error body");
+#[cfg(feature = "http")]
+mod http_parity {
+    use axum::body::{Body, to_bytes};
+    use http::{Request, StatusCode};
+    use omnia_guest::api::ErrorBody;
+    use omnia_guest::api::http::get;
+    use tower::ServiceExt as _;
 
-    let router = axum::Router::new().route("/items", get(lookup)).with_state(client);
-    let request =
-        Request::builder().uri("/items?id=42").body(Body::empty()).expect("build request");
-    let http = router.oneshot(request).await.expect("router serves request");
-    assert_eq!(http.status(), StatusCode::NOT_FOUND);
-    let bytes = to_bytes(http.into_body(), usize::MAX).await.expect("collect body");
-    let http_body: ErrorBody = serde_json::from_slice(&bytes).expect("http carries an error body");
+    use super::*;
 
-    assert_eq!(command_body, http_body);
-    assert_eq!(command_body.error, "not_found");
-    assert_eq!(response.exit, 2);
+    #[tokio::test]
+    async fn handler_error_shares_http_discriminant() {
+        let client = Client::new("app", ());
+        let metadata = Metadata::default();
+        let response = Command::new(&client, &metadata, Format::Json)
+            .call(lookup, || Ok(item("42")), render_never)
+            .await;
+        let command_body: ErrorBody =
+            serde_json::from_slice(&response.stderr).expect("stderr carries an error body");
+
+        let router = axum::Router::new().route("/items", get(lookup)).with_state(client);
+        let request =
+            Request::builder().uri("/items?id=42").body(Body::empty()).expect("build request");
+        let http = router.oneshot(request).await.expect("router serves request");
+        assert_eq!(http.status(), StatusCode::NOT_FOUND);
+        let bytes = to_bytes(http.into_body(), usize::MAX).await.expect("collect body");
+        let http_body: ErrorBody =
+            serde_json::from_slice(&bytes).expect("http carries an error body");
+
+        assert_eq!(command_body, http_body);
+        assert_eq!(command_body.error, "not_found");
+        assert_eq!(response.exit, 2);
+    }
 }

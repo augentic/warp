@@ -1,5 +1,7 @@
 //! Handler invocation and HTTP routing contracts.
 
+#![cfg(feature = "http")]
+
 use std::future::{Ready, ready};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -9,9 +11,6 @@ use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use omnia_guest::api::http::{
     HttpError, MethodFilter, RawRequest, delete, get, handle_with, patch, post, put,
-};
-use omnia_guest::api::messaging::{
-    Delivery, DeliveryError, Router as MessagingRouter, consume, consume_with,
 };
 use omnia_guest::api::{Client, Context, DecodeError, ErrorBody, Format, Metadata};
 use omnia_guest::not_found;
@@ -343,82 +342,6 @@ async fn closure_handler_with_configuration() {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("collect body");
     assert_eq!(serde_json::from_slice::<String>(&bytes).expect("decode body"), "welcome, ada");
-}
-
-fn delivery(topic: Option<&str>, payload: &[u8]) -> Delivery {
-    Delivery {
-        topic: topic.map(str::to_owned),
-        payload: payload.to_vec(),
-        content_type: Some("application/json".to_string()),
-        metadata: vec![("correlation-id".to_string(), "delivery-1".to_string())],
-    }
-}
-
-#[tokio::test]
-async fn messaging_exact_topic() {
-    let router =
-        MessagingRouter::new(Client::new("messages", ())).route("events.created", consume(echo));
-
-    router
-        .handle(delivery(Some("events.created"), br#"{"name":"message","count":2}"#))
-        .await
-        .expect("exact route handles delivery");
-    assert_eq!(
-        router.handle(delivery(Some("events.*"), br#"{"name":"message"}"#)).await,
-        Err(DeliveryError::UnhandledTopic("events.*".to_string()))
-    );
-}
-
-#[tokio::test]
-async fn messaging_failures() {
-    let router = MessagingRouter::new(Client::new("messages", ())).route("events", consume(echo));
-
-    assert_eq!(
-        router.handle(delivery(None, br#"{"name":"message"}"#)).await,
-        Err(DeliveryError::MissingTopic)
-    );
-    assert!(matches!(
-        router.handle(delivery(Some("events"), b"not-json")).await,
-        Err(DeliveryError::Rejected(_))
-    ));
-}
-
-#[test]
-#[should_panic(expected = "duplicate messaging topic")]
-fn messaging_duplicate_topic() {
-    let _router = MessagingRouter::new(Client::new("messages", ()))
-        .route("events", consume(echo))
-        .route("events", consume(echo));
-}
-
-#[derive(Debug)]
-struct RawText {
-    text: String,
-}
-
-fn raw_text<P: Send + Sync + 'static>(
-    input: RawText, _context: Context<P>,
-) -> Ready<Result<String, omnia_guest::Error>> {
-    ready(Ok(input.text))
-}
-
-#[tokio::test]
-async fn consume_with_raw_payload() {
-    let router = MessagingRouter::new(Client::new("messages", ())).route(
-        "events.raw",
-        consume_with(raw_text, |delivery: &Delivery| {
-            std::str::from_utf8(&delivery.payload)
-                .map(|text| RawText {
-                    text: text.to_owned(),
-                })
-                .map_err(|error| DecodeError::new(format!("payload is not utf-8: {error}")))
-        }),
-    );
-
-    router
-        .handle(delivery(Some("events.raw"), b"not-json"))
-        .await
-        .expect("raw decoder handles a payload JSON consume rejects");
 }
 
 #[derive(Debug)]

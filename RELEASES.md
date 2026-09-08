@@ -189,6 +189,14 @@
   environment through `Metadata::from_lookup`, so a `command!` guest is
   correlated the way an HTTP guest is through `x-request-id` headers.
 
+- `omnia-guest` `http` feature (default on): gates the axum-backed
+  `api::http` routing, the `mcp` server, the `HttpError` / `HttpResult`
+  root re-exports, and the hidden `axum` re-export behind
+  `dep:axum` + `dep:serde_urlencoded`, so a command-only or messaging-only
+  guest built with `--no-default-features` links no axum. The outbound
+  `HttpRequest` capability, `Error::status()`, and `api::messaging` stay
+  unconditional.
+
 ### Changed
 
 - Every invocation is observable. `Metadata::from_lookup` mints a request id
@@ -211,6 +219,10 @@
 - `omnia_guest::api::command` compiles on every target: only `execute_wasi`
   (the `wasi:cli/run` driver) stays wasm32-only, so `command!` and
   `IntoExit` are testable natively.
+
+- `omnia-guest` defaults are now `["orm", "http"]`. A guest that already
+  disables default features and routes HTTP must add `features = ["http"]`;
+  a default build is unchanged.
 
 - Guest handlers are fns bound at the route, over an owned context.
   `omnia_guest::api::Context<P>` drops its lifetime and `Copy`: it owns

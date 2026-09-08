@@ -3,6 +3,7 @@
 pub mod api;
 mod capabilities;
 mod error;
+#[cfg(feature = "http")]
 pub mod mcp;
 #[cfg(feature = "orm")]
 pub mod orm;
@@ -14,8 +15,11 @@ pub mod document_store {
     pub use omnia_wasi_docstore::document_store::*;
 }
 
+#[cfg(feature = "http")]
 #[doc(hidden)]
-pub use {anyhow, axum, bytes, http, http_body, tracing};
+pub use axum;
+#[doc(hidden)]
+pub use {anyhow, bytes, http, http_body, tracing};
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub use {
@@ -23,6 +27,7 @@ pub use {
     omnia_wasi_messaging, omnia_wasi_otel, wasip3, wit_bindgen,
 };
 
+#[cfg(feature = "http")]
 pub use crate::api::http::{HttpError, HttpResult};
 pub use crate::capabilities::*;
 pub use crate::error::*;

@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument as _;
 
 pub mod command;
+#[cfg(feature = "http")]
 pub mod http;
 /// Typed exact-topic messaging routing.
 pub mod messaging;

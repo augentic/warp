@@ -232,6 +232,17 @@
   disables default features and routes HTTP must add `features = ["http"]`;
   a default build is unchanged.
 
+- The workspace-internal `omnia-guest` dependency entry carries
+  `default-features = false`, following the `omnia-core` / `omnia-test`
+  precedent, and in-repo consumers name the rungs they use (`examples`:
+  `orm`, `http`, `command`; `test-programs`: `command`; `omnia-test/guest`:
+  `orm`). Previously the `omnia-test` dev-dependency unified `orm` and
+  `http` back into every `cargo clippy -p omnia-guest --no-default-features
+  --all-targets` line, so the `features` gate checks were vacuous; the
+  `http` and `command` gates are now real (`omnia-test/guest` still carries
+  `orm` because its doubles wrap the ORM traits). External consumers are
+  unaffected: the crate's own `default = ["orm", "http"]` is unchanged.
+
 - The `examples/cli` guest (shared by `cli-static`) runs on the command
   façade: `command!(main)` over `parse` → `Command::new(..).call(handler,
   decode, render)`, with a global `--format text|json` and

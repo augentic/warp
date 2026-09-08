@@ -64,6 +64,12 @@ install_crate = "cargo-udeps"
 
 # Feature gates: the flagged crates must stay warning-free without their
 # default features so the gates don't rot (`lint` only covers --all-features).
+# The workspace `omnia-guest` entry carries `default-features = false` so
+# the `http`/`command` lines are real checks: a consumer that re-enabled the
+# defaults would unify them back in through `--all-targets` (dev-deps) and
+# silently turn the gate vacuous. In-repo consumers name the rungs they use;
+# `omnia-test/guest` legitimately carries `orm`, so that gate stays masked
+# under `--all-targets`.
 [tasks.features]
 script = '''
 cargo clippy -p omnia -p omnia-wasi-sql -p omnia-wasi-identity -p omnia-guest --no-default-features --all-targets -- -D warnings

@@ -13,7 +13,7 @@ mod routing;
 
 use std::collections::{BTreeMap, BTreeSet, btree_map};
 use std::fmt;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use anyhow::{Context as _, Result, bail, ensure};
 pub use routing::{CliRoutes, HttpRoutes, PatternRoutes, Resolver, Routes, TriggerRouter};
@@ -147,6 +147,12 @@ pub struct Registry<T: 'static> {
     linker: Linker<T>,
     // Concurrent-read, exclusive-write; guards are never held across an await.
     guests: RwLock<BTreeMap<GuestId, Arc<Guest<T>>>>,
+    // Serializes guest lifecycle transitions (register/deregister/bootstrap
+    // serve wiring) against readers, so the guest map and the transport's
+    // endpoint map always change as one atomic step. Lock order: this gate
+    // first, then a single inner map — never the other way around, and never
+    // across an await.
+    lifecycle: RwLock<()>,
     // Assemble-time identities, which deregistration refuses to remove.
     static_ids: BTreeSet<GuestId>,
     // Link functions polyfilled onto the shared linker at bootstrap, per
@@ -210,6 +216,7 @@ impl<T: WasiView + 'static> Registry<T> {
             options,
             linker,
             guests: RwLock::new(guests),
+            lifecycle: RwLock::new(()),
             static_ids,
             wired_links,
             routes,
@@ -260,10 +267,22 @@ impl<T: 'static> Registry<T> {
         &self.options
     }
 
+    /// Enter a lifecycle read section: registry/transport lookups taken under
+    /// this guard never observe a half-applied register or deregister.
+    fn lifecycle_read(&self) -> RwLockReadGuard<'_, ()> {
+        self.lifecycle.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Enter a lifecycle write section: the holder may mutate the guest map
+    /// and the transport endpoint map as one atomic transition.
+    pub(crate) fn lifecycle_write(&self) -> RwLockWriteGuard<'_, ()> {
+        self.lifecycle.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Look up a guest by identity.
     #[must_use]
     pub fn get(&self, id: &GuestId) -> Option<Arc<Guest<T>>> {
-        let _lifecycle = self.dispatch.lifecycle_read();
+        let _lifecycle = self.lifecycle_read();
         self.guests.read().unwrap_or_else(PoisonError::into_inner).get(id).cloned()
     }
 
@@ -274,7 +293,7 @@ impl<T: 'static> Registry<T> {
     /// The order falls out of the [`BTreeMap`] keying; no per-call sort.
     pub fn guests(&self) -> impl ExactSizeIterator<Item = Arc<Guest<T>>> {
         let snapshot: Vec<Arc<Guest<T>>> = {
-            let _lifecycle = self.dispatch.lifecycle_read();
+            let _lifecycle = self.lifecycle_read();
             self.guests.read().unwrap_or_else(PoisonError::into_inner).values().cloned().collect()
         };
         snapshot.into_iter()
@@ -292,7 +311,7 @@ impl<T: 'static> Registry<T> {
         let transport = self.dispatch.transport();
 
         // Lifecycle write first, then the inner maps (the crate-wide order).
-        let _lifecycle = self.dispatch.lifecycle_write();
+        let _lifecycle = self.lifecycle_write();
         let mut guests = self.guests.write().unwrap_or_else(PoisonError::into_inner);
         match guests.entry(id.clone()) {
             btree_map::Entry::Occupied(_) => return Err(PublishError::Occupied(id)),
@@ -318,7 +337,7 @@ impl<T: 'static> Registry<T> {
         }
         let transport = self.dispatch.transport();
 
-        let _lifecycle = self.dispatch.lifecycle_write();
+        let _lifecycle = self.lifecycle_write();
         let removed = self.guests.write().unwrap_or_else(PoisonError::into_inner).remove(id);
         ensure!(removed.is_some(), "guest `{id}` is not registered");
         transport.remove(id);
@@ -342,14 +361,14 @@ impl<T: 'static> Registry<T> {
     /// Returns the number of registered guests.
     #[must_use]
     pub fn len(&self) -> usize {
-        let _lifecycle = self.dispatch.lifecycle_read();
+        let _lifecycle = self.lifecycle_read();
         self.guests.read().unwrap_or_else(PoisonError::into_inner).len()
     }
 
     /// Returns `true` if the registry has no guests.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        let _lifecycle = self.dispatch.lifecycle_read();
+        let _lifecycle = self.lifecycle_read();
         self.guests.read().unwrap_or_else(PoisonError::into_inner).is_empty()
     }
 }

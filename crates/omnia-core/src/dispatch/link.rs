@@ -19,6 +19,7 @@ use super::transport::LinkTransport as _;
 use super::value::read_plain_value;
 use crate::artifact::LoadedGuest;
 use crate::registry::GuestId;
+use crate::value::contains_resource;
 
 /// The functions polyfilled onto a linker — the union across guests at
 /// function granularity, since components import only the functions they use
@@ -225,7 +226,7 @@ fn prepare<'a>(
         }
     }
 
-    let ctx = handle.enter(&target)?;
+    let ctx = handle.policy.enter(&target)?;
 
     let param_types: Vec<Type> = ty.params().map(|(_, ty)| ty).collect();
     let result_types: Vec<Type> = ty.results().collect();
@@ -273,7 +274,7 @@ fn timeout_error(
 ) -> anyhow::Error {
     anyhow::anyhow!(
         "link dispatch to `{target}` for `{interface}/{func}` timed out after {:?}",
-        handle.timeout()
+        handle.policy.timeout
     )
 }
 
@@ -288,7 +289,7 @@ where
     if call.uncapped {
         return fut.await;
     }
-    tokio::time::timeout(handle.timeout(), fut)
+    tokio::time::timeout(handle.policy.timeout, fut)
         .await
         .map_err(|_elapsed| timeout_error(handle, &call.target, interface, func))?
 }
@@ -384,17 +385,4 @@ where
 
     log_dispatch(&call, interface, func);
     Ok(())
-}
-
-/// Recursively reports whether a value carries a live resource handle.
-pub(super) fn contains_resource(value: &Val) -> bool {
-    match value {
-        Val::Resource(_) => true,
-        Val::List(values) | Val::Tuple(values) => values.iter().any(contains_resource),
-        Val::Record(fields) => fields.iter().any(|(_, value)| contains_resource(value)),
-        Val::Variant(_, Some(value))
-        | Val::Option(Some(value))
-        | Val::Result(Ok(Some(value)) | Err(Some(value))) => contains_resource(value),
-        _ => false,
-    }
 }

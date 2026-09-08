@@ -29,7 +29,7 @@ mod serve;
 mod transport;
 mod value;
 
-pub use handle::{DispatchHandle, as_command_chain};
+pub use handle::DispatchHandle;
 pub use host::Dispatcher;
 // `polyfill_late`, `serve_guest`, and `Endpoint` are crate-internal: this
 // module is private, and `lib.rs` does not re-export them.

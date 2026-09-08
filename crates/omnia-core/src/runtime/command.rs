@@ -71,7 +71,7 @@ where
     // A command chain root: link dispatches the guest makes (and their nested
     // hops) run without the `GUEST_TIMEOUT_MS` wall-clock cap, matching the
     // uncapped `wasi:cli/run` drive itself.
-    let outcome = crate::dispatch::as_command_chain(
+    let outcome = crate::chain::as_command_chain(
         store.run_concurrent(async move |store| command.wasi_cli_run().call_run(store).await),
     )
     .await;

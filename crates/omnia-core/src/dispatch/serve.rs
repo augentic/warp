@@ -9,8 +9,8 @@ use futures::StreamExt as _;
 use wasmtime::component::types;
 use wrpc_wasmtime::ServeExt as _;
 
-use super::handle::with_chain;
 use super::transport::{Endpoint, InProcServer};
+use crate::chain::with_chain;
 use crate::registry::{Guest, GuestId};
 use crate::runtime::Runtime;
 use crate::store::StoreCtx;
@@ -56,7 +56,7 @@ where
 
     // Publish every bootstrap endpoint as one lifecycle transition.
     let transport = handle.transport();
-    let _lifecycle = handle.lifecycle_write();
+    let _lifecycle = registry.lifecycle_write();
     for (id, endpoint) in endpoints {
         transport.insert(&id, endpoint)?;
     }

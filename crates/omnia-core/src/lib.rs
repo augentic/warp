@@ -3,6 +3,7 @@
 #![allow(unsafe_code)] // wasmtime component deserialization
 
 mod artifact;
+mod chain;
 mod digest;
 mod dispatch;
 mod extensions;
@@ -14,6 +15,7 @@ mod registry;
 mod runtime;
 mod store;
 pub mod telemetry;
+mod value;
 
 #[doc(hidden)]
 pub use pastey;
@@ -23,10 +25,10 @@ pub use wrpc_wasmtime::{WrpcCtxView, WrpcView};
 pub use {anyhow, futures, tokio, wasmtime, wasmtime_wasi};
 
 pub use self::artifact::{ELF_MAGIC, GuestArtifact, LoadedGuest, is_precompiled};
+pub use self::chain::as_command_chain;
 pub use self::digest::sha256_digest;
 pub use self::dispatch::{
-    DispatchHandle, Dispatcher, FirstArgSelector, GuestSelector, LinkClient, WrpcState,
-    as_command_chain, serve_links,
+    DispatchHandle, Dispatcher, FirstArgSelector, GuestSelector, LinkClient, WrpcState, serve_links,
 };
 pub use self::extensions::Extensions;
 pub use self::host::{

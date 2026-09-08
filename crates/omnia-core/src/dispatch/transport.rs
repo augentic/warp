@@ -26,7 +26,7 @@ use wasmtime::component::ResourceTable;
 use wrpc_transport::frame::{Oneshot, Server};
 use wrpc_wasmtime::{SharedResourceTable, WrpcCtx, WrpcCtxView};
 
-use super::handle::ChainCtx;
+use crate::chain::ChainCtx;
 use crate::registry::GuestId;
 
 /// Default in-process pipe buffer size (64 kibibytes).
@@ -99,33 +99,19 @@ impl Drop for Endpoint {
 ///
 /// The server map is `Arc`-shared behind interior mutability so a guest
 /// registered after bootstrap gains an endpoint on every clone of the carrier
-/// (serve-at-register). Reads additionally pass through the shared lifecycle
-/// gate, so a lookup never observes a half-applied register or deregister;
-/// mutations run with the lifecycle write guard already held by the caller
-/// (the registry's transactional publish/remove).
-#[derive(Clone)]
+/// (serve-at-register). Mutations run with the registry's lifecycle write
+/// guard already held by the caller (the transactional publish/remove), so the
+/// registry map and this map change as one step; lookups take only the map's
+/// own lock.
+#[derive(Clone, Default)]
 pub struct InProcess {
     servers: Arc<RwLock<HashMap<GuestId, Endpoint>>>,
-    // The dispatch handle's lifecycle gate (see `DispatchHandle::lifecycle`).
-    // Lock order: lifecycle first, then `servers` — never the reverse.
-    lifecycle: Arc<RwLock<()>>,
 }
 
 impl InProcess {
-    /// Create an empty carrier sharing the dispatch handle's lifecycle gate;
-    /// [`super::serve_links`] and dynamic registration populate it.
-    #[must_use]
-    pub(crate) fn new(lifecycle: Arc<RwLock<()>>) -> Self {
-        Self {
-            servers: Arc::new(RwLock::new(HashMap::new())),
-            lifecycle,
-        }
-    }
-
     /// Returns the wRPC server serving `target`'s host-mediated exports, if any.
     #[must_use]
     pub fn server(&self, target: &GuestId) -> Option<Arc<InProcServer>> {
-        let _lifecycle = self.lifecycle.read().unwrap_or_else(PoisonError::into_inner);
         self.servers
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -137,8 +123,8 @@ impl InProcess {
     /// occupied slot so a registration can never clobber an existing guest's
     /// endpoint.
     ///
-    /// The caller must hold the lifecycle write guard (this method takes only
-    /// the inner map lock, so taking the gate here would deadlock).
+    /// The caller must hold the registry's lifecycle write guard; this method
+    /// takes only the inner map lock.
     pub(crate) fn insert(&self, target: &GuestId, endpoint: Endpoint) -> Result<()> {
         let inserted = {
             let mut servers = self.servers.write().unwrap_or_else(PoisonError::into_inner);
@@ -157,7 +143,7 @@ impl InProcess {
     /// Remove `target`'s endpoint, aborting its drain tasks; in-flight
     /// invocations hold their own server [`Arc`] and complete.
     ///
-    /// The caller must hold the lifecycle write guard.
+    /// The caller must hold the registry's lifecycle write guard.
     pub(crate) fn remove(&self, target: &GuestId) {
         self.servers.write().unwrap_or_else(PoisonError::into_inner).remove(target);
     }
@@ -165,7 +151,6 @@ impl InProcess {
     /// Drop every endpoint, aborting all drain tasks, so a finished deployment
     /// releases the `Runtime` clones (and the engine) they pin.
     pub(crate) fn clear(&self) {
-        let _lifecycle = self.lifecycle.write().unwrap_or_else(PoisonError::into_inner);
         self.servers.write().unwrap_or_else(PoisonError::into_inner).clear();
     }
 }

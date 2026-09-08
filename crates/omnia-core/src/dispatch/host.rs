@@ -4,15 +4,15 @@ use anyhow::{Context as _, Result, bail};
 use futures::FutureExt as _;
 use wasmtime::component::{Val, types};
 
-use super::link::contains_resource;
 use crate::host::FutureResult;
 use crate::registry::GuestId;
 use crate::runtime::Runtime;
+use crate::value::contains_resource;
 
 /// Host-originated dynamic dispatch into a *known* guest export — the host→guest
 /// counterpart of the selector-driven guest→guest `dispatch`.
 ///
-/// Shares the depth bound (`DispatchHandle::enter`) and resource rejection with
+/// Shares the depth bound (`ChainPolicy::enter`) and resource rejection with
 /// guest→guest dispatch. The target is instantiated *fresh* on a new store and
 /// the matching export invoked directly, so the callee can never re-enter its
 /// caller and needs no declared link interface for `interface`.
@@ -52,7 +52,7 @@ where
 
     // Depth-count this hop exactly like a guest→guest dispatch. The guard
     // is held here (borrowing `runtime`) across the awaited callee task below.
-    let _guard = runtime.registry().dispatch().enter(target)?;
+    let _guard = runtime.registry().dispatch().policy.enter(target)?;
 
     // Run the callee on its own task. `resolve` is invoked from *within* the
     // caller guest's concurrent event loop (the backend's loop awaits it inside

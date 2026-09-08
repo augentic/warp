@@ -142,6 +142,52 @@ fn into_exit_passes_status() {
     assert_eq!(Response::failure("", USAGE_EXIT).into_exit(), Err(64));
 }
 
+// Tests share the process environment, so each uses its own prefix and
+// never touches a name another test reads or writes.
+#[expect(unsafe_code, reason = "edition 2024 makes set_var unsafe; see the SAFETY note")]
+fn set_env(name: &str, value: &str) {
+    // SAFETY: the prefixed name is written once by this one test, and no
+    // other code in the process reads it concurrently.
+    unsafe { std::env::set_var(name, value) };
+}
+
+#[test]
+fn from_env_reads_prefixed_ids() {
+    set_env("FROM_ENV_READS_REQUEST_ID", "req-1");
+    set_env("FROM_ENV_READS_CORRELATION_ID", "corr-1");
+    set_env("FROM_ENV_READS_CAUSATION_ID", "cause-1");
+
+    let metadata = Metadata::from_env("FROM_ENV_READS");
+
+    assert_eq!(metadata.request_id.as_deref(), Some("req-1"));
+    assert_eq!(metadata.correlation_id.as_deref(), Some("corr-1"));
+    assert_eq!(metadata.causation_id.as_deref(), Some("cause-1"));
+    assert_eq!(metadata.deadline, None);
+}
+
+#[test]
+fn from_env_correlation_falls_back_to_request_id() {
+    set_env("FROM_ENV_FALLBACK_REQUEST_ID", "req-2");
+
+    let metadata = Metadata::from_env("FROM_ENV_FALLBACK");
+
+    assert_eq!(metadata.request_id.as_deref(), Some("req-2"));
+    assert_eq!(metadata.correlation_id.as_deref(), Some("req-2"));
+    assert_eq!(metadata.causation_id, None);
+}
+
+#[test]
+fn from_env_mints_when_absent() {
+    let metadata = Metadata::from_env("FROM_ENV_MINTS");
+
+    let request_id = metadata.request_id.as_deref().expect("request id is minted");
+    assert_eq!(request_id.len(), 32);
+    assert!(request_id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')));
+    assert_eq!(metadata.correlation_id, metadata.request_id);
+    assert_eq!(metadata.causation_id, None);
+    assert_ne!(Metadata::from_env("FROM_ENV_MINTS").request_id, metadata.request_id);
+}
+
 #[derive(Debug, Deserialize)]
 struct Greet {
     name: String,

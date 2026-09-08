@@ -151,6 +151,11 @@ impl<S: Send + Sync> FromRequestParts<S> for Metadata {
 
 /// Create a route for the filtered methods with a custom decoder and encoder.
 ///
+/// The decoder's error is anything `Into<HttpError>`: a [`DecodeError`] is
+/// a 400, while an [`Error`](crate::Error) classifies the refusal (a 404 for
+/// an unroutable path parameter, say). A closure using `?` names its return
+/// type, as below, so the error type is not left to inference.
+///
 /// ```rust,ignore
 /// use axum::response::IntoResponse;
 /// use omnia_guest::api::{Client, Context};
@@ -166,7 +171,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Metadata {
 ///         handle_with(
 ///             MethodFilter::POST.or(MethodFilter::PUT),
 ///             import_text,
-///             |raw: RawRequest<'_>| {
+///             |raw: RawRequest<'_>| -> Result<ImportText, DecodeError> {
 ///                 let text = std::str::from_utf8(raw.body)
 ///                     .map_err(|error| DecodeError::new(format!("body is not utf-8: {error}")))?;
 ///                 Ok(ImportText { text: text.to_owned() })
@@ -176,14 +181,15 @@ impl<S: Send + Sync> FromRequestParts<S> for Metadata {
 ///     )
 ///     .with_state(Client::new("acme", Provider));
 /// ```
-pub fn handle_with<F, P, I, D, E>(
+pub fn handle_with<F, P, I, D, DE, E>(
     filter: MethodFilter, handler: F, decode: D, encode: E,
 ) -> MethodRouter<Client<P>>
 where
     F: Handler<P, I>,
     F::Error: Into<HttpError>,
     I: Send + 'static,
-    D: Fn(RawRequest<'_>) -> Result<I, DecodeError> + Clone + Send + Sync + 'static,
+    D: Fn(RawRequest<'_>) -> Result<I, DE> + Clone + Send + Sync + 'static,
+    DE: Into<HttpError>,
     E: Fn(F::Output) -> Response + Clone + Send + Sync + 'static,
     P: Send + Sync + 'static,
 {
@@ -304,14 +310,15 @@ fn json_response<T: Serialize>(output: T) -> Response {
     Json(output).into_response()
 }
 
-async fn dispatch<F, P, I, D, E>(
+async fn dispatch<F, P, I, D, DE, E>(
     (handler, decode, encode): (F, D, E), State(client): State<Client<P>>, params: RawPathParams,
     RawQuery(query): RawQuery, headers: HeaderMap, metadata: Metadata, body: Bytes,
 ) -> Response
 where
     F: Handler<P, I>,
     F::Error: Into<HttpError>,
-    D: Fn(RawRequest<'_>) -> Result<I, DecodeError>,
+    D: Fn(RawRequest<'_>) -> Result<I, DE>,
+    DE: Into<HttpError>,
     E: Fn(F::Output) -> Response,
     P: Send + Sync + 'static,
 {
@@ -325,7 +332,7 @@ where
     };
     let input = match decode(raw) {
         Ok(input) => input,
-        Err(error) => return HttpError::from(error).into_response(),
+        Err(error) => return Into::<HttpError>::into(error).into_response(),
     };
     match client.call(handler, input, &metadata).await {
         Ok(output) => encode(output),

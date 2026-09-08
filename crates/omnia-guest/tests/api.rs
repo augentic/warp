@@ -458,7 +458,7 @@ fn text_router() -> axum::Router {
             handle_with(
                 MethodFilter::POST.or(MethodFilter::PUT),
                 join_names,
-                |raw: RawRequest<'_>| {
+                |raw: RawRequest<'_>| -> Result<JoinNames, DecodeError> {
                     let body = std::str::from_utf8(raw.body)
                         .map_err(|error| DecodeError::new(format!("body is not utf-8: {error}")))?;
                     Ok(JoinNames {
@@ -473,7 +473,7 @@ fn text_router() -> axum::Router {
             handle_with(
                 MethodFilter::GET,
                 greet,
-                |raw: RawRequest<'_>| {
+                |raw: RawRequest<'_>| -> Result<Greet, DecodeError> {
                     let name = raw
                         .path_params
                         .iter()
@@ -782,4 +782,89 @@ async fn encoded_into_response() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
     assert_eq!(body, "widget x3");
+}
+
+fn is_minted_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+#[tokio::test]
+async fn missing_request_id_is_minted() {
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/echo?name=plan")
+        .body(Body::empty())
+        .expect("build request");
+    let (status, value) = send(request).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let correlation_id = value["correlation_id"].as_str().expect("correlation id is minted");
+    assert!(is_minted_id(correlation_id), "{correlation_id:?} is not 32 lowercase hex chars");
+}
+
+#[test]
+fn from_lookup_mints_distinct_request_ids() {
+    let first = Metadata::from_lookup(|_| None);
+    let second = Metadata::from_lookup(|_| None);
+
+    let request_id = first.request_id.as_deref().expect("request id is minted");
+    assert!(is_minted_id(request_id));
+    assert_eq!(first.correlation_id, first.request_id);
+    assert_eq!(first.causation_id, None);
+    assert_ne!(first.request_id, second.request_id);
+    assert_eq!(Metadata::default().request_id, None);
+}
+
+#[derive(Debug)]
+struct Fetch {
+    id: String,
+}
+
+fn fetch<P: Send + Sync + 'static>(
+    input: Fetch, _context: Context<P>,
+) -> Ready<Result<String, omnia_guest::Error>> {
+    let Fetch { id } = input;
+    ready(Ok(format!("item {id}")))
+}
+
+#[tokio::test]
+async fn decoder_classifies_not_found() {
+    let router = axum::Router::new()
+        .route(
+            "/items/{id}",
+            handle_with(
+                MethodFilter::GET,
+                fetch,
+                |raw: RawRequest<'_>| -> Result<Fetch, omnia_guest::Error> {
+                    let id = raw
+                        .path_params
+                        .iter()
+                        .find(|(key, value)| key == "id" && value.parse::<u32>().is_ok())
+                        .map(|(_, value)| value.clone())
+                        .ok_or_else(|| not_found!("no such item"))?;
+                    Ok(Fetch { id })
+                },
+                text_response,
+            ),
+        )
+        .with_state(Client::new("test", ()));
+
+    let (status, _, body) = send_raw(
+        router.clone(),
+        Request::builder().uri("/items/7").body(Body::empty()).expect("build request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "item 7");
+
+    let (status, content_type, body) = send_raw(
+        router,
+        Request::builder().uri("/items/seven").body(Body::empty()).expect("build request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(content_type.as_deref(), Some("application/json"));
+    let body: ErrorBody = serde_json::from_str(&body).expect("decode error body");
+    assert_eq!(body.error, "not_found");
+    assert_eq!(body.message, "no such item");
 }

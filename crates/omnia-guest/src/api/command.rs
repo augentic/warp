@@ -23,7 +23,7 @@
 //!         Parsed::Usage(error) => return Response::usage(&error),
 //!     };
 //!     let client = Client::new("app", Provider);
-//!     let metadata = Metadata::default();
+//!     let metadata = Metadata::from_env("APP");
 //!     let command = Command::new(&client, &metadata, app.format);
 //!     match app.verb {
 //!         Verb::Greet { name } => command.call(greet, || Ok(Greet { name }), render_greeting).await,
@@ -47,6 +47,20 @@ use crate::api::{Client, ErrorBody, Format, Handler, Metadata};
 
 /// The exit status of a command-line usage error (`EX_USAGE`).
 pub const USAGE_EXIT: u8 = 64;
+
+impl Metadata {
+    /// Build metadata from the process environment: `<PREFIX>_REQUEST_ID`,
+    /// `<PREFIX>_CORRELATION_ID`, and `<PREFIX>_CAUSATION_ID`.
+    ///
+    /// The command line's carrier for the ids HTTP reads from headers; a
+    /// missing request id is minted as on every transport.
+    #[must_use]
+    pub fn from_env(prefix: &str) -> Self {
+        Self::from_lookup(|name| {
+            std::env::var(format!("{prefix}_{}", name.to_ascii_uppercase().replace('-', "_"))).ok()
+        })
+    }
+}
 
 /// Wires an `async fn` as the guest's `wasi:cli/run` export, driven through
 /// `execute_wasi` (wasm32 only) so telemetry is initialized and flushed

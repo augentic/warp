@@ -183,7 +183,30 @@
   the `command` feature. The module and `command!` docs now describe the
   façade shape: `command!(main)` over an `async fn main() -> Response`.
 
+- `omnia_guest::api::Metadata::from_env(prefix)`: the command line's carrier
+  for invocation metadata, reading `<PREFIX>_REQUEST_ID`,
+  `<PREFIX>_CORRELATION_ID`, and `<PREFIX>_CAUSATION_ID` from the process
+  environment through `Metadata::from_lookup`, so a `command!` guest is
+  correlated the way an HTTP guest is through `x-request-id` headers.
+
 ### Changed
+
+- Every invocation is observable. `Metadata::from_lookup` mints a request id
+  when the transport carries none — 32 lowercase hex chars from
+  `wasi:random` on `wasm32` (a `std::hash::RandomState`-derived id natively,
+  for tests) — so HTTP (`x-request-id`), messaging metadata, and the command
+  line's environment all yield a `request_id`, with the correlation id still
+  falling back to it; `Metadata::default()` stays all-`None`. `Client::call`
+  runs the handler inside a `handler` tracing span carrying `request_id` and
+  `correlation_id`.
+
+- `api::http::handle_with` decoders return any error `Into<HttpError>`
+  (`D: Fn(RawRequest<'_>) -> Result<I, DE>` with `DE: Into<HttpError>`)
+  rather than only `DecodeError`, so an HTTP decoder classifies its refusal
+  (a `not_found!` path parameter answers 404 with the JSON `ErrorBody`) as
+  a command decoder already does. The JSON conveniences (`get`, `post`, …)
+  keep `DecodeError`; a decoder closure that uses `?` now names its return
+  type (`|raw: RawRequest<'_>| -> Result<Input, DecodeError> { .. }`).
 
 - `omnia_guest::api::command` compiles on every target: only `execute_wasi`
   (the `wasi:cli/run` driver) stays wasm32-only, so `command!` and

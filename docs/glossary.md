@@ -52,6 +52,24 @@ The `omnia:plugins/loader` host capability: a guest names a package (location pl
 
 How the loader turns a package name and location into component bytes. Declared at the composition root as deployment data (the macro's `plugins: { locations: [...] }` list, or `[[location]]` in `omnia.toml`, carried as `Location`s) and installed through `Plugins::install_declared` from the `Wiring::extend` hook, never runtime-core machinery. One slot per location kind, filled by the built-in acquirers `PathMounts` (named directory roots, read fresh on every load) and `RegistryClient` (exact package references, optionally cached by hand in a `ContentStore` + `ReleaseStore` backend); a load names its `Origin` (a registry endpoint or a location-relative path), routes structurally by kind, and an empty slot refuses typed.
 
+## Guest SDK (`omnia-guest`)
+
+### Handler contract
+
+The transport-neutral unit of guest application logic: an `async fn(I, Context<P>) -> Result<O, E>` invoked through `Client::call(handler, input, &metadata)`. The HTTP router, the messaging router, and the command façade are adapters that decode a transport event into `I` and encode the result back; the handler never knows which one called it. See [Writing Guests](guides/writing-guests.md#the-handler-contract).
+
+### Command façade
+
+`omnia_guest::api::command`, the command-line adapter over the handler contract: `parse` classifies argv into the clap grammar or one of clap's own responses (`Parsed`), `Command::new(&client, &metadata, format).call(handler, decode, render)` projects one verb (decode → `Client::call` → encode) onto a `Response { stdout, stderr, exit }`, and `command!(main)` binds the entry as the `wasi:cli/run` export, writing the channels at that boundary. The clap-backed parts ship behind the `command` cargo feature. Distinct from the host-side **`omnia-cli`** crate, which is the `run` grammar of a host binary.
+
+### Failure envelope
+
+What a command reports on stderr when a verb fails: the `Failure` type wrapping an `omnia_guest::Error` plus an optional remedy hint. As text, `error[<code>]: <message>` then `hint: <hint>`; as JSON, flat `{"error","message","exit-code","hint"?}`. Its `error` and `message` are the transport-neutral `api::ErrorBody` that `HttpError::from(Error)` also emits as a JSON body, so one discriminant identifies a failure over HTTP and over a shell.
+
+### Exit map
+
+The fixed mapping from an `omnia_guest::Error` variant to a process exit status, `Error::exit_code()`: `BadRequest` 1, `NotFound` 2, `ServerError` 3, `BadGateway` 4 — the exit-code twin of `Error::status()` (400 / 404 / 500 / 502). A clap usage error exits `USAGE_EXIT` (64, `EX_USAGE`) rather than clap's default 2, so exit 2 always means a `NotFound` envelope. A guest never chooses an exit code; the error class does.
+
 ## Runtime platform
 
 ### Runtime core

@@ -71,9 +71,34 @@ let router = Router::new(Client::new("my-org", MyProvider))
 
 ### Custom codecs
 
-`get`/`post`/`put`/`patch`/`delete`/`consume` are JSON defaults: `get` and `delete` decode path and query parameters, while `post`/`put`/`patch` merge a JSON body with path parameters. When a route speaks another wire format (or needs other methods), supply the codec yourself: `handle_with(filter, handler, decode, encode)` pairs a `MethodFilter` (unions work, e.g. `MethodFilter::POST.or(MethodFilter::PUT)`) with a decoder `Fn(RawRequest<'_>) -> Result<I, DecodeError>` over the raw request (path parameters, query, headers, body) and an encoder `Fn(F::Output) -> Response` (reuse `axum::Json` for JSON output); `consume_with(handler, decode)` takes a decoder `Fn(&Delivery) -> Result<I, DecodeError>` over the whole delivery. Errors keep flowing through `Into<HttpError>`; `HttpError::with_body` carries a preformatted error body (e.g. an XML document) with its content type.
+`get`/`post`/`put`/`patch`/`delete`/`consume` are JSON defaults: `get` and `delete` decode path and query parameters, while `post`/`put`/`patch` merge a JSON body with path parameters. When a route speaks another wire format (or needs other methods), supply the codec yourself: `handle_with(filter, handler, decode, encode)` pairs a `MethodFilter` (unions work, e.g. `MethodFilter::POST.or(MethodFilter::PUT)`) with a decoder `Fn(RawRequest<'_>) -> Result<I, E>` (any `E: Into<HttpError>`, so a decoder can classify its refusal) over the raw request (path parameters, query, headers, body) and an encoder `Fn(F::Output) -> Response` (reuse `axum::Json` for JSON output); `consume_with(handler, decode)` takes a decoder `Fn(&Delivery) -> Result<I, DecodeError>` over the whole delivery. Errors keep flowing through `Into<HttpError>`: an `omnia_guest::Error` becomes the JSON `api::ErrorBody` (`{"error","message"}`) at its status, and `HttpError::with_body` carries a preformatted error body (e.g. an XML document) with its content type.
 
-Command-mode guests parse argv with clap and call `Client::call(handler, input, &metadata)` on the same handlers. `omnia_guest::command!(entry)` wires an `async fn` returning `()` or `Result<(), u8>` as the `wasi:cli/run` export through `command::execute_wasi`, so guest telemetry is initialized and flushed. Omnia creates a fresh component instance for each command invocation.
+### Command-mode guests
+
+`api::command` is the command-line mirror of `api::http` over the same handlers (`command` feature for the clap-backed parts): `parse::<App>(argv)` classifies argv into the grammar or one of clap's own responses (`Parsed::{App, Display, Usage}`), and `Command::new(&client, &metadata, format).call(handler, decode, render)` projects one verb — decode → `Client::call` → encode — onto a `Response { stdout, stderr, exit }`. `omnia_guest::command!(main)` binds an `async fn main() -> Response` as the `wasi:cli/run` export and writes the channels at that boundary (`IntoExit`; `Result<(), u8>` and `()` entries are accepted too). Omnia creates a fresh component instance for each command invocation.
+
+```rust,ignore
+use omnia_guest::api::command::{Command, Parsed, Response, parse};
+use omnia_guest::api::{Client, Metadata};
+
+omnia_guest::command!(main);
+
+async fn main() -> Response {
+    let app = match parse::<App>(wasip3::cli::environment::get_arguments()) {
+        Parsed::App(app) => app,
+        Parsed::Display(text) => return Response::success(text),
+        Parsed::Usage(error) => return Response::usage(&error),
+    };
+    let client = Client::new("my-org", MyProvider);
+    let metadata = Metadata::from_env("APP");
+    let command = Command::new(&client, &metadata, app.format);
+    match app.verb {
+        Verb::Create(input) => command.call(create_item, || Ok(input), render_item).await,
+    }
+}
+```
+
+A success body is encoded in the selected `api::Format` (`Text` through the `render` closure, `Json` pretty-printed) onto stdout at exit 0. A decode or handler error is a `Failure` envelope on stderr at `Error::exit_code()` — `BadRequest` 1, `NotFound` 2, `ServerError` 3, `BadGateway` 4 — rendered as `error[<code>]: <message>` (plus `hint: …` when `.hints(..)` or `with_hint` attached one) or as flat JSON `{"error","message","exit-code","hint"?}`; `error` and `message` are the same `ErrorBody` HTTP emits. A clap usage error exits `USAGE_EXIT` (64), so exit 2 always means `NotFound`. `Metadata::from_env(prefix)` reads `<PREFIX>_REQUEST_ID` / `_CORRELATION_ID` / `_CAUSATION_ID`, minting a request id when absent as every transport does.
 
 ## Capabilities
 
@@ -114,7 +139,7 @@ async fn process(provider: &impl StateStore + Publish) -> anyhow::Result<()> {
 
 ## Error Handling
 
-The crate provides an `Error` enum with HTTP-aware variants (`BadRequest`, `NotFound`, `ServerError`, `BadGateway`) and helper macros for ergonomic error creation.
+The crate provides an `Error` enum with four variants (`BadRequest`, `NotFound`, `ServerError`, `BadGateway`), each mapped to an HTTP status (`Error::status()`) and a process exit code (`Error::exit_code()`: 1 / 2 / 3 / 4), and helper macros for ergonomic error creation. Every transport reports a failure as the same `api::ErrorBody { error, message }` (`code()` and `description()`).
 
 ```rust,ignore
 use omnia_guest::{bad_request, server_error, not_found};
@@ -134,8 +159,10 @@ See the [workspace documentation](https://github.com/augentic/omnia) for the ful
 ## Cargo features
 
 - `orm` *(default)*: the SQL ORM, table/document capabilities, and document-store re-exports.
+- `http` *(default)*: the axum-backed `api::http` routing, the `mcp` server, and the `HttpError` / `HttpResult` root re-exports. The outbound `HttpRequest` capability and `Error::status()` need no feature.
+- `command`: the clap-backed parts of `api::command` (`parse`, `completions`, `Response::usage`, the `clap_complete::Shell` re-export, and the `clap::ValueEnum` derive on `api::Format`). The `Command` projector, `Response`, `Failure`, and `command!` need no feature.
 
-Guests that do not use SQL or documents can disable defaults to shrink wasm build time and size.
+Guests that do not use SQL, documents, or inbound HTTP can disable defaults to shrink wasm build time and size; a command-only guest is `default-features = false, features = ["command"]`.
 
 ## License
 

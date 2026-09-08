@@ -1,5 +1,7 @@
 //! Handler invocation and HTTP routing contracts.
 
+#![cfg(feature = "http")]
+
 use std::future::{Ready, ready};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -10,10 +12,8 @@ use http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use omnia_guest::api::http::{
     HttpError, MethodFilter, RawRequest, delete, get, handle_with, patch, post, put,
 };
-use omnia_guest::api::messaging::{
-    Delivery, DeliveryError, Router as MessagingRouter, consume, consume_with,
-};
-use omnia_guest::api::{Client, Context, DecodeError, Metadata};
+use omnia_guest::api::{Client, Context, DecodeError, ErrorBody, Format, Metadata};
+use omnia_guest::not_found;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt as _;
 
@@ -344,82 +344,6 @@ async fn closure_handler_with_configuration() {
     assert_eq!(serde_json::from_slice::<String>(&bytes).expect("decode body"), "welcome, ada");
 }
 
-fn delivery(topic: Option<&str>, payload: &[u8]) -> Delivery {
-    Delivery {
-        topic: topic.map(str::to_owned),
-        payload: payload.to_vec(),
-        content_type: Some("application/json".to_string()),
-        metadata: vec![("correlation-id".to_string(), "delivery-1".to_string())],
-    }
-}
-
-#[tokio::test]
-async fn messaging_exact_topic() {
-    let router =
-        MessagingRouter::new(Client::new("messages", ())).route("events.created", consume(echo));
-
-    router
-        .handle(delivery(Some("events.created"), br#"{"name":"message","count":2}"#))
-        .await
-        .expect("exact route handles delivery");
-    assert_eq!(
-        router.handle(delivery(Some("events.*"), br#"{"name":"message"}"#)).await,
-        Err(DeliveryError::UnhandledTopic("events.*".to_string()))
-    );
-}
-
-#[tokio::test]
-async fn messaging_failures() {
-    let router = MessagingRouter::new(Client::new("messages", ())).route("events", consume(echo));
-
-    assert_eq!(
-        router.handle(delivery(None, br#"{"name":"message"}"#)).await,
-        Err(DeliveryError::MissingTopic)
-    );
-    assert!(matches!(
-        router.handle(delivery(Some("events"), b"not-json")).await,
-        Err(DeliveryError::Rejected(_))
-    ));
-}
-
-#[test]
-#[should_panic(expected = "duplicate messaging topic")]
-fn messaging_duplicate_topic() {
-    let _router = MessagingRouter::new(Client::new("messages", ()))
-        .route("events", consume(echo))
-        .route("events", consume(echo));
-}
-
-#[derive(Debug)]
-struct RawText {
-    text: String,
-}
-
-fn raw_text<P: Send + Sync + 'static>(
-    input: RawText, _context: Context<P>,
-) -> Ready<Result<String, omnia_guest::Error>> {
-    ready(Ok(input.text))
-}
-
-#[tokio::test]
-async fn consume_with_raw_payload() {
-    let router = MessagingRouter::new(Client::new("messages", ())).route(
-        "events.raw",
-        consume_with(raw_text, |delivery: &Delivery| {
-            std::str::from_utf8(&delivery.payload)
-                .map(|text| RawText {
-                    text: text.to_owned(),
-                })
-                .map_err(|error| DecodeError::new(format!("payload is not utf-8: {error}")))
-        }),
-    );
-
-    router
-        .handle(delivery(Some("events.raw"), b"not-json"))
-        .await
-        .expect("raw decoder handles a payload JSON consume rejects");
-}
-
 #[derive(Debug)]
 struct JoinNames {
     names: Vec<String>,
@@ -457,7 +381,7 @@ fn text_router() -> axum::Router {
             handle_with(
                 MethodFilter::POST.or(MethodFilter::PUT),
                 join_names,
-                |raw: RawRequest<'_>| {
+                |raw: RawRequest<'_>| -> Result<JoinNames, DecodeError> {
                     let body = std::str::from_utf8(raw.body)
                         .map_err(|error| DecodeError::new(format!("body is not utf-8: {error}")))?;
                     Ok(JoinNames {
@@ -472,7 +396,7 @@ fn text_router() -> axum::Router {
             handle_with(
                 MethodFilter::GET,
                 greet,
-                |raw: RawRequest<'_>| {
+                |raw: RawRequest<'_>| -> Result<Greet, DecodeError> {
                     let name = raw
                         .path_params
                         .iter()
@@ -669,8 +593,225 @@ async fn xml_handler_error() {
 
 #[tokio::test]
 async fn xml_malformed_body() {
-    let (status, content_type, _) = send_raw(xml_router(), xml_request("<greet>")).await;
+    let (status, content_type, body) = send_raw(xml_router(), xml_request("<greet>")).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(content_type.as_deref(), Some("application/json"));
+    let body: ErrorBody = serde_json::from_str(&body).expect("decode error body");
+    assert_eq!(body.error, "invalid_request");
+    assert_eq!(body.message, "malformed greet document");
+}
+
+#[derive(Debug, Deserialize)]
+struct Lookup {
+    id: String,
+}
+
+fn lookup<P: Send + Sync + 'static>(
+    input: Lookup, _context: Context<P>,
+) -> Ready<Result<String, omnia_guest::Error>> {
+    let Lookup { id } = input;
+    ready(Err(not_found!("no item {id}")))
+}
+
+#[tokio::test]
+async fn error_body_json() {
+    let router =
+        axum::Router::new().route("/items", get(lookup)).with_state(Client::new("test", ()));
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/items?id=42")
+        .body(Body::empty())
+        .expect("build request");
+    let (status, content_type, body) = send_raw(router, request).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(content_type.as_deref(), Some("application/json"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).expect("decode error body"),
+        serde_json::json!({ "error": "not_found", "message": "no item 42" })
+    );
+}
+
+#[derive(Debug, Serialize)]
+struct Summary {
+    name: String,
+    count: u32,
+}
+
+fn render_summary(summary: &Summary, out: &mut dyn std::fmt::Write) -> std::fmt::Result {
+    write!(out, "{} x{}", summary.name, summary.count)
+}
+
+#[test]
+fn format_encode_text_and_json() {
+    let summary = Summary {
+        name: "widget".to_string(),
+        count: 3,
+    };
+
+    let text = Format::Text.encode(&summary, render_summary);
+    assert_eq!(text.media_type, "text/plain; charset=utf-8");
+    assert_eq!(text.bytes, b"widget x3");
+
+    let json = Format::Json.encode(&summary, render_summary);
+    assert_eq!(json.media_type, "application/json");
+    let json = String::from_utf8(json.bytes).expect("json is utf-8");
+    assert!(json.ends_with('\n'));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).expect("decode json"),
+        serde_json::json!({ "name": "widget", "count": 3 })
+    );
+}
+
+#[derive(Debug, Deserialize)]
+struct Summarize {
+    name: String,
+    count: u32,
+}
+
+fn summarize<P: Send + Sync + 'static>(
+    input: Summarize, _context: Context<P>,
+) -> Ready<Result<Summary, omnia_guest::Error>> {
+    ready(Ok(Summary {
+        name: input.name,
+        count: input.count,
+    }))
+}
+
+#[tokio::test]
+async fn encoded_into_response() {
+    let router = axum::Router::new()
+        .route(
+            "/summary",
+            handle_with(
+                MethodFilter::GET,
+                summarize,
+                |raw: RawRequest<'_>| {
+                    serde_urlencoded::from_str::<Summarize>(raw.query.unwrap_or_default())
+                        .map_err(|error| DecodeError::new(error.to_string()))
+                },
+                |summary: Summary| Format::Text.encode(&summary, render_summary).into_response(),
+            ),
+        )
+        .with_state(Client::new("test", ()));
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/summary?name=widget&count=3")
+        .body(Body::empty())
+        .expect("build request");
+    let (status, content_type, body) = send_raw(router, request).await;
+
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
+    assert_eq!(body, "widget x3");
+}
+
+fn is_minted_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+#[tokio::test]
+async fn missing_request_id_is_minted() {
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/echo?name=plan")
+        .body(Body::empty())
+        .expect("build request");
+    let (status, value) = send(request).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let correlation_id = value["correlation_id"].as_str().expect("correlation id is minted");
+    assert!(is_minted_id(correlation_id), "{correlation_id:?} is not 32 lowercase hex chars");
+}
+
+#[test]
+fn from_lookup_mints_distinct_request_ids() {
+    let first = Metadata::from_lookup(|_| None);
+    let second = Metadata::from_lookup(|_| None);
+
+    let request_id = first.request_id.as_deref().expect("request id is minted");
+    assert!(is_minted_id(request_id));
+    assert_eq!(first.correlation_id, first.request_id);
+    assert_eq!(first.causation_id, None);
+    assert_ne!(first.request_id, second.request_id);
+    assert_eq!(Metadata::default().request_id, None);
+}
+
+#[test]
+fn from_lookup_reads_every_id() {
+    let metadata = Metadata::from_lookup(|name| match name {
+        "request-id" => Some("req-1".to_owned()),
+        "correlation-id" => Some("corr-1".to_owned()),
+        "causation-id" => Some("cause-1".to_owned()),
+        _ => None,
+    });
+
+    assert_eq!(metadata.request_id.as_deref(), Some("req-1"));
+    assert_eq!(metadata.correlation_id.as_deref(), Some("corr-1"));
+    assert_eq!(metadata.causation_id.as_deref(), Some("cause-1"));
+    assert_eq!(metadata.deadline, None);
+}
+
+#[test]
+fn from_lookup_correlation_falls_back_to_request_id() {
+    let metadata = Metadata::from_lookup(|name| (name == "request-id").then(|| "req-2".to_owned()));
+
+    assert_eq!(metadata.request_id.as_deref(), Some("req-2"));
+    assert_eq!(metadata.correlation_id.as_deref(), Some("req-2"));
+    assert_eq!(metadata.causation_id, None);
+}
+
+#[derive(Debug)]
+struct Fetch {
+    id: String,
+}
+
+fn fetch<P: Send + Sync + 'static>(
+    input: Fetch, _context: Context<P>,
+) -> Ready<Result<String, omnia_guest::Error>> {
+    let Fetch { id } = input;
+    ready(Ok(format!("item {id}")))
+}
+
+#[tokio::test]
+async fn decoder_classifies_not_found() {
+    let router = axum::Router::new()
+        .route(
+            "/items/{id}",
+            handle_with(
+                MethodFilter::GET,
+                fetch,
+                |raw: RawRequest<'_>| -> Result<Fetch, omnia_guest::Error> {
+                    let id = raw
+                        .path_params
+                        .iter()
+                        .find(|(key, value)| key == "id" && value.parse::<u32>().is_ok())
+                        .map(|(_, value)| value.clone())
+                        .ok_or_else(|| not_found!("no such item"))?;
+                    Ok(Fetch { id })
+                },
+                text_response,
+            ),
+        )
+        .with_state(Client::new("test", ()));
+
+    let (status, _, body) = send_raw(
+        router.clone(),
+        Request::builder().uri("/items/7").body(Body::empty()).expect("build request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "item 7");
+
+    let (status, content_type, body) = send_raw(
+        router,
+        Request::builder().uri("/items/seven").body(Body::empty()).expect("build request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(content_type.as_deref(), Some("application/json"));
+    let body: ErrorBody = serde_json::from_str(&body).expect("decode error body");
+    assert_eq!(body.error, "not_found");
+    assert_eq!(body.message, "no such item");
 }

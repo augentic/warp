@@ -57,7 +57,7 @@ The [`examples/`](examples/README.md) directory contains a complete working gues
 | [`omnia-core`](crates/omnia-core)               | Live-runtime SDK — wasmtime engine, registry, dispatch, stores, and telemetry |
 | [`omnia-plugin`](crates/omnia-plugin)           | `omnia:plugins/loader` capability — loader host, acquisition policies, and plugin stores; selected by omnia's `plugin` feature |
 | [`omnia-cli`](crates/omnia-cli)                 | Leaf `run` grammar — clap plus argv-precedence; selected by omnia's `cli` feature |
-| [`omnia-guest`](crates/omnia-guest)             | Guest SDK — `Handler`/`Client`/`Context`, HTTP/messaging routers, errors, ORM, and MCP support |
+| [`omnia-guest`](crates/omnia-guest)             | Guest SDK — `Handler`/`Client`/`Context`, HTTP/messaging routers and the command façade, errors, ORM, and MCP support |
 | [`omnia-guest-macros`](crates/guest-macros)     | `#[instrument]` observability attribute for guests                                         |
 | [`omnia-host-macros`](crates/host-macros)       | `runtime!` proc-macro for host runtime generation                                          |
 | [`omnia-wasi-blobstore`](crates/wasi-blobstore) | wasi:blobstore host and guest bindings                                                     |

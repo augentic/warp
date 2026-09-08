@@ -24,7 +24,7 @@ A guest is a `cdylib` crate targeting `wasm32-wasip2`. Guest code is guarded wit
 Typical guest dependencies:
 
 - `wasip3` — WASI Preview 3 bindings (exports, HTTP types, CLI, filesystem preopens)
-- `omnia-guest` — guest SDK: `HttpResult`, error types, ORM helpers, MCP support
+- `omnia-guest` — guest SDK: the handler contract, HTTP/messaging routers and the command façade, error types, ORM helpers, MCP support
 - `omnia-wasi-*` — the guest side of each capability you use (`omnia-wasi-keyvalue`, `omnia-wasi-messaging`, ...). These crates compile to guest bindings on `wasm32` and to the host implementation on native, so hosts and guests share one dependency name.
 
 A minimal HTTP guest crate looks like this (align `wasip3`/`wit-bindgen` with the versions the omnia workspace pins — a mismatch causes executor deadlocks, see [Troubleshooting](../troubleshooting.md#outbound-http-or-spawned-work-inside-a-handler-deadlocks)):
@@ -178,46 +178,98 @@ impl Guest for Http {
 
 Messaging uses `api::messaging::Router` and `consume(create_item)`; topic matching is exact. The export remains visible application code and calls `api::messaging::handle`. Because the same handler fns register in any router, one guest can expose the same logic over HTTP, messaging, and a CLI without duplicating it.
 
-Typed routes default to JSON: `http::get` and `http::delete` decode path and query parameters, while `http::post`, `http::put`, and `http::patch` merge a JSON body with path parameters. Routes that speak another wire format (or need other methods) use the general constructors instead: `http::handle_with(filter, handler, decode, encode)` pairs a `MethodFilter` (unions work, e.g. `MethodFilter::POST.or(MethodFilter::PUT)`) with a decoder `Fn(RawRequest<'_>) -> Result<I, DecodeError>` over a raw-request view (path parameters, query, headers, body) plus an encoder `Fn(F::Output) -> Response`, and `messaging::consume_with(handler, decode)` takes a decoder `Fn(&Delivery) -> Result<I, DecodeError>` over the whole `Delivery`. Errors keep flowing through `Into<HttpError>`, and `HttpError::with_body` carries a preformatted error body (e.g. an XML document) with its content type.
+Typed routes default to JSON: `http::get` and `http::delete` decode path and query parameters, while `http::post`, `http::put`, and `http::patch` merge a JSON body with path parameters. Routes that speak another wire format (or need other methods) use the general constructors instead: `http::handle_with(filter, handler, decode, encode)` pairs a `MethodFilter` (unions work, e.g. `MethodFilter::POST.or(MethodFilter::PUT)`) with a decoder `Fn(RawRequest<'_>) -> Result<I, E>` (any `E: Into<HttpError>`, so a decoder can classify its refusal — a `not_found!` path parameter answers 404) over a raw-request view (path parameters, query, headers, body) plus an encoder `Fn(F::Output) -> Response`, and `messaging::consume_with(handler, decode)` takes a decoder `Fn(&Delivery) -> Result<I, DecodeError>` over the whole `Delivery`. Errors keep flowing through `Into<HttpError>`: an `omnia_guest::Error` becomes the JSON `api::ErrorBody` (`{"error","message"}`) at the variant's status, and `HttpError::with_body` carries a preformatted error body (e.g. an XML document) with its content type.
 
 ## Command-mode guests
 
-For run-once workloads (jobs, CLIs, agent tasks), parse argv with clap and call `Client::call(handler, input, &metadata)` on the same [handler contract](#the-handler-contract). `omnia_guest::command!` wires an `async fn` returning `()` or `Result<(), u8>` as the `wasi:cli/run` export, run through `command::execute_wasi` so guest telemetry is initialized and flushed; a guest that needs its own export writes the `export!` and calls `execute_wasi` itself:
+For run-once workloads (jobs, CLIs, agent tasks), `omnia_guest::api::command` is the command-line mirror of the HTTP router over the same [handler contract](#the-handler-contract): argv is decoded into handler input, the handler runs through `Client::call`, and the output is encoded onto the process channels. The clap-backed parts (`parse`, `completions`, the `clap::ValueEnum` derive on `Format`) sit behind the `command` cargo feature (`omnia-guest = { version = "...", features = ["command"] }`); the projector itself needs no feature.
 
 ```rust,noplayground
-use clap::Parser;
-use omnia_guest::api::{Client, Context, Metadata};
+use std::fmt;
+
+use clap::{Args, Parser, Subcommand};
+use omnia_guest::Error;
+use omnia_guest::api::command::{Command, Parsed, Response, parse};
+use omnia_guest::api::{Client, Context, Format, Metadata};
+use serde::Serialize;
 
 #[derive(Parser)]
-enum App {
+struct App {
+    /// Output format for every verb
+    #[arg(long, global = true, default_value = "text")]
+    format: Format,
+
+    #[command(subcommand)]
+    verb: Verb,
+}
+
+#[derive(Subcommand)]
+enum Verb {
     Sync(SyncInput),
 }
 
-async fn sync(input: SyncInput, context: Context<MyProvider>) -> Result<String, Error> {
+#[derive(Args)]
+struct SyncInput {
+    source: String,
+}
+
+#[derive(Serialize)]
+struct Synced {
+    count: usize,
+}
+
+async fn sync(input: SyncInput, context: Context<MyProvider>) -> Result<Synced, Error> {
     // ...
 }
 
-omnia_guest::command!(dispatch);
+fn render_synced(synced: &Synced, out: &mut dyn fmt::Write) -> fmt::Result {
+    writeln!(out, "synced {} items", synced.count)
+}
 
-async fn dispatch() -> Result<(), u8> {
-    let app = App::try_parse_from(wasip3::cli::environment::get_arguments()).map_err(|error| {
-        let _ = error.print();
-        2
-    })?;
-    let client = Client::new("acme", MyProvider);
-    let output = match app {
-        App::Sync(input) => client.call(sync, input, &Metadata::default()).await.map_err(|_| 1)?,
+omnia_guest::command!(main);
+
+async fn main() -> Response {
+    let app = match parse::<App>(wasip3::cli::environment::get_arguments()) {
+        Parsed::App(app) => app,
+        Parsed::Display(text) => return Response::success(text),
+        Parsed::Usage(error) => return Response::usage(&error),
     };
-    print!("{output}");
-    Ok(())
+    let client = Client::new("acme", MyProvider);
+    let metadata = Metadata::from_env("APP");
+    let command = Command::new(&client, &metadata, app.format)
+        .hints(|error| (error.code() == "not_found").then(|| "run `app sync --help`".into()));
+    match app.verb {
+        Verb::Sync(input) => command.call(sync, || Ok(input), render_synced).await,
+    }
 }
 ```
 
+The pieces, in the order argv flows through them:
+
+- **`parse::<App>(argv) -> Parsed`** classifies clap's outcomes: the grammar (`Parsed::App`), help or version text for stdout at exit 0 (`Parsed::Display`), or a usage error (`Parsed::Usage`), which `Response::usage(&error)` renders on stderr at `USAGE_EXIT` (64, `EX_USAGE`). `completions::<App>(shell, name)` produces a shell-completion script as a `Response`; `Shell` is re-exported from `clap_complete`.
+- **`Command::new(&client, &metadata, format)`** is the projector, and `command.call(handler, decode, render)` runs one verb. `decode: FnOnce() -> Result<I, Error>` builds the handler input from the parsed grammar (its `bad_request!` exits 1 like any other refusal); the handler runs through `Client::call`; a success body is encoded in the selected `Format` onto stdout at exit 0 — `render` is its text form (`Fn(&T, &mut dyn fmt::Write) -> fmt::Result`), and `Format::Json` is the output pretty-printed with a trailing newline. `.hints(|error| ..)` attaches a remedy hint to every failure that carries none.
+- **`Response { stdout, stderr, exit }`** buffers both channels. `command!(main)` binds an `async fn main() -> Response` as the `wasi:cli/run` export and writes the channels at that boundary through `IntoExit`: a `BrokenPipe` on either channel (a reader that went away) keeps the response's own exit, any other refused channel exits 3. Because the channels are whole buffers, a command that must stream writes to the process channels itself and returns `Result<(), u8>` or `()`, which `command!` also accepts; a guest that needs its own export writes the `export!` and calls `command::execute_wasi` itself.
+- **`Metadata::from_env(prefix)`** reads `<PREFIX>_REQUEST_ID`, `<PREFIX>_CORRELATION_ID`, and `<PREFIX>_CAUSATION_ID` from the environment. A missing request id is minted from `wasi:random`, as on every transport, so a command invocation is as observable as an HTTP request: `Client::call` runs the handler in a `handler` span carrying the request and correlation ids.
+
+### Failures and the exit map
+
+A decode or handler error becomes a `Failure` envelope on stderr, in the same `Format` as a success body, and the process exits with `Error::exit_code()`:
+
+| Error class | `error` (from the macros) | Exit | HTTP status |
+| ----------- | ------------------------- | ---- | ----------- |
+| `BadRequest` | `bad_request` | 1 | 400 |
+| `NotFound` | `not_found` | 2 | 404 |
+| `ServerError` | `server_error` | 3 | 500 |
+| `BadGateway` | `bad_gateway` | 4 | 502 |
+| clap usage error | — | 64 | — |
+
+As text the envelope is `error[<code>]: <message>` followed by `hint: <hint>` when a hint is attached; as JSON it is flat: `{"error","message","exit-code","hint"?}` (the hint key is omitted when absent). `error` and `message` are the transport-neutral `api::ErrorBody` — `HttpError::from(Error)` emits the same two fields as an `application/json` body at the variant's status — so a client reads one discriminant whether it reached the handler over HTTP or a shell. Usage errors exit 64 rather than clap's default 2, so exit 2 always means a `NotFound` envelope.
+
 - Arguments after `--` on the host command line arrive as the guest's argv (`args[0]` is the program name, supplied by the runtime).
-- clap parses argv into handler input; the guest prints output and maps handler failures to an exit code.
-- clap supplies nested help, version, and usage handling.
 - The host runtime must be built with `mode: command` — see [Composing a Runtime](composing-a-runtime.md).
 - The telemetry lifecycle imports `omnia:otel`, so the deployment links `WasiOtel` (the no-op `OtelDefault` suffices).
+
+`examples/cli` is the runnable pair: `greet`, `add`, `env`, and a `fail [CLASS]` verb that returns each error class so the exit map can be observed.
 
 ## Tracing
 

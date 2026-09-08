@@ -59,6 +59,17 @@ impl Error {
         }
     }
 
+    /// Returns the process exit code associated with the variant.
+    #[must_use]
+    pub const fn exit_code(&self) -> u8 {
+        match self {
+            Self::BadRequest { .. } => 1,
+            Self::NotFound { .. } => 2,
+            Self::ServerError { .. } => 3,
+            Self::BadGateway { .. } => 4,
+        }
+    }
+
     /// Returns the error code for the variant.
     #[must_use]
     pub fn code(&self) -> String {
@@ -264,6 +275,14 @@ mod tests {
                 .description(),
             "revision `abc` contains `spec.md` but it is not UTF-8 (invalid utf-8)"
         );
+    }
+
+    #[test]
+    fn exit_map() {
+        assert_eq!(bad_request!("x").exit_code(), 1);
+        assert_eq!(not_found!("x").exit_code(), 2);
+        assert_eq!(server_error!("x").exit_code(), 3);
+        assert_eq!(bad_gateway!("x").exit_code(), 4);
     }
 
     #[test]

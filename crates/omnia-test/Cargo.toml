@@ -119,3 +119,7 @@ required-features = ["guest"]
 [[test]]
 name = "host"
 required-features = ["host"]
+
+[[test]]
+name = "command"
+required-features = ["host"]

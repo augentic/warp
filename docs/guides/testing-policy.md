@@ -27,6 +27,8 @@ A host crate's suite is one flat file per interface in its root `tests/` directo
 
 Assertions split by vantage point: the guest asserts what crosses the boundary to it (a panic traps and fails the host test); the host test asserts wire fidelity and side effects.
 
+One group tests the guest SDK's own boundary rather than a `wasi-*` host: `programs/command/` holds `command!` guests built on the command façade (`command/exit_map`), and `crates/omnia-test/tests/command.rs` drives them with `Deployment::run` over the default bundle, asserting the `ExitStatus` the host observes for each verb — the exit map (`ok` 0, `bad` 1, `missing` 2, `upstream` 4) and `USAGE_EXIT` (64) for an unknown verb. These programs do not trap; the exit status *is* the behaviour under test, so the guest returns a `Response` and the host test reads `code_u8()`.
+
 ## Scenario backends
 
 The bundle a suite runs over is `omnia_test::host::Backends`: the in-memory default for every host, deterministic (no environment read, no socket opened), with the model swappable for any `WasiModelCtx`. Most model scenarios script `ScriptedModel` — the answers, the tool calls and workspace steps each completion makes before answering, and the limits — and assert the recorded exchanges afterwards:

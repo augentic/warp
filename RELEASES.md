@@ -119,19 +119,47 @@
   each feature alone and in combination (`features`, `hack`) and guards the
   `build` dependency tree (`tree-guard`).
 
-- `omnia_guest::command!(entry)`: wires an `async fn` returning `()` or
-  `Result<(), u8>` (via the `IntoExit` trait) as the guest's `wasi:cli/run`
-  export, run through `command::execute_wasi` so telemetry is initialized
-  and flushed around it. The e2e scenario programs use it in place of the
-  deleted `test_programs::run!`; because the export now imports
-  `omnia:otel`, `omnia_test::host::Deployment::run_host` links `WasiOtel`
-  beside the host under test and requires `B: Provides<WasiOtel>`.
-
-- `omnia_wasi_websocket::WebSocketDefault::new()` (and `Default`) is public:
-  the backend without a listener, whose `connect()` still yields a client.
-  `omnia_wasi_http::ConnectOptions` and `omnia_wasi_sql::ConnectOptions` are
-  re-exported so `connect_with` can be called with fixed options instead of
-  `connect()` reading `HTTP_CONNECT_TIMEOUT` / `SQL_DATABASE`.
+- The command façade, `omnia_guest::api::command`: the command-line mirror
+  of `api::http` over the same `Client`, so one handler fn serves HTTP, a
+  topic, and a shell without duplication. `parse::<App>(argv) -> Parsed`
+  classifies clap's outcomes — the grammar (`App`), help or version text for
+  stdout at exit 0 (`Display`), or a usage error (`Usage`) that
+  `Response::usage(&error)` renders at `USAGE_EXIT` (64, `EX_USAGE`, so exit
+  2 always means a `NotFound` envelope). `Command::new(&client, &metadata,
+  format)` is the projector: `command.call(handler, decode, render).await ->
+  Response` runs one verb as decode → `Client::call` → encode, where
+  `decode: FnOnce() -> Result<I, Error>` builds the handler input from the
+  parsed grammar, a success body is encoded through `Format::encode` (with
+  `render` as its text form) onto stdout at exit 0, and a decode or handler
+  error (`F::Error: Into<Failure>`) becomes the `Failure` envelope on stderr
+  at `Error::exit_code()` in the same `Format`; `.hints(|error| ..)`
+  attaches a remedy hint to every failure that carries none. `Failure` wraps
+  an `omnia_guest::Error` (`From<Error>`, `From<anyhow::Error>`) plus an
+  optional `with_hint(..)`, serializes flat as
+  `{"error","message","exit-code","hint"?}`, and renders as text through
+  `Failure::text` (`error[<code>]: <message>` then `hint: <hint>`).
+  `Response { stdout, stderr, exit }` (`success(stdout)` /
+  `failure(stderr, exit)`) buffers both channels and implements `IntoExit`:
+  `omnia_guest::command!(main)` binds an `async fn main() -> Response` as
+  the `wasi:cli/run` export (entries returning `Result<(), u8>` or `()` are
+  accepted too), runs it through `command::execute_wasi` so telemetry is
+  initialized and flushed, and writes the channels at that boundary — a
+  `BrokenPipe` on either keeps the response's own exit, any other refused
+  channel exits 3 (`ServerError`). `completions::<App>(shell, name)`
+  produces a shell-completion script and `clap_complete::Shell` is
+  re-exported. `Metadata::from_env(prefix)` is the command line's carrier
+  for invocation metadata, reading `<PREFIX>_REQUEST_ID` /
+  `_CORRELATION_ID` / `_CAUSATION_ID` through `Metadata::from_lookup` so a
+  command guest is correlated the way an HTTP guest is through
+  `x-request-id`. The clap-backed parts (`parse`, `completions`,
+  `Response::usage`, `Shell`, and the `clap::ValueEnum` derive on
+  `api::Format` for a `--format text|json` argument) ship behind the new
+  `omnia-guest` `command` feature (`clap` + `clap_complete`); `Command`,
+  `Response`, `Failure`, and `command!` need no feature. The e2e scenario
+  programs enter through `command!` in place of the deleted
+  `test_programs::run!`; because the export imports `omnia:otel`,
+  `omnia_test::host::Deployment::run_host` links `WasiOtel` beside the host
+  under test and requires `B: Provides<WasiOtel>`.
 
 - Transport-neutral failure and encoding surface in `omnia_guest::api`:
   `ErrorBody { error, message }` is the one wire body for a failed
@@ -144,50 +172,6 @@
   closure as `text/plain; charset=utf-8`, or pretty JSON with a trailing
   newline as `application/json` — and `Encoded` implements axum's
   `IntoResponse` (200 with the media type as `Content-Type`).
-
-- `omnia-guest` `command` feature (`clap` + `clap_complete`) for the
-  clap-backed `api::command` façade; `api::Format` derives
-  `clap::ValueEnum` under it so a `--format text|json` argument parses
-  directly.
-
-- The command façade's output contract in `omnia_guest::api::command`:
-  `Response { stdout, stderr, exit }` (`success(stdout)` /
-  `failure(stderr, exit)`) buffers both channels and implements `IntoExit`,
-  so a `command!` entry can return it directly — the channels are written
-  at the exit boundary, a `BrokenPipe` on either keeps the response's own
-  exit, and any other refused channel exits 3 (`ServerError`). `Failure` is
-  the failure envelope over an `omnia_guest::Error` (`From<Error>`,
-  `From<anyhow::Error>`) with an optional remedy `with_hint(..)`: it
-  serializes flat as `{"error","message","exit-code","hint"?}` and renders
-  as text through `Failure::text` (`error[<code>]: <message>` then
-  `hint: <hint>`). `USAGE_EXIT = 64` (`EX_USAGE`) is the exit of a clap
-  usage error, so exit 2 always means a `NotFound` envelope. Under the
-  `command` feature: `parse::<App>(argv) -> Parsed { App, Display, Usage }`
-  classifies clap's own outcomes (help/version text for stdout at exit 0
-  versus a usage error), `Response::usage(&clap::Error)` renders the latter
-  at `USAGE_EXIT`, `completions::<App>(shell, name)` produces a
-  shell-completion script, and `clap_complete::Shell` is re-exported.
-
-- The command projector `omnia_guest::api::command::Command<'a, P>`, the
-  command-line mirror of `api::http` over the same `Client`:
-  `Command::new(&client, &metadata, format)` then
-  `command.call(handler, decode, render).await -> Response` runs one verb
-  as decode → `Client::call` → encode. `decode: FnOnce() -> Result<I, Error>`
-  builds the handler input from the parsed grammar; a success body is
-  encoded through `Format::encode` (with `render` as its text form) onto
-  stdout at exit 0; a decode or handler error (`F::Error: Into<Failure>`)
-  becomes the `Failure` envelope on stderr at `Error::exit_code()`, in the
-  same `Format` (`error[<code>]: <message>` text or the flat JSON). An
-  optional `.hints(|error| ..)` fn attaches a remedy hint to every failure
-  that carries none. The projector needs no clap, so it compiles without
-  the `command` feature. The module and `command!` docs now describe the
-  façade shape: `command!(main)` over an `async fn main() -> Response`.
-
-- `omnia_guest::api::Metadata::from_env(prefix)`: the command line's carrier
-  for invocation metadata, reading `<PREFIX>_REQUEST_ID`,
-  `<PREFIX>_CORRELATION_ID`, and `<PREFIX>_CAUSATION_ID` from the process
-  environment through `Metadata::from_lookup`, so a `command!` guest is
-  correlated the way an HTTP guest is through `x-request-id` headers.
 
 - `omnia-guest` `http` feature (default on): gates the axum-backed
   `api::http` routing, the `mcp` server, the `HttpError` / `HttpResult`
@@ -204,7 +188,13 @@
   through the real runtime: a handler's error class reaches the host as its
   mapped status (`bad_request!` 1, `not_found!` 2, `bad_gateway!` 4, success
   0) and an unknown verb exits `USAGE_EXIT` (64). `test-programs`' wasm32
-  build now enables `omnia-guest`'s `command` feature and depends on `clap`.
+  build enables `omnia-guest`'s `command` feature and depends on `clap`.
+
+- `omnia_wasi_websocket::WebSocketDefault::new()` (and `Default`) is public:
+  the backend without a listener, whose `connect()` still yields a client.
+  `omnia_wasi_http::ConnectOptions` and `omnia_wasi_sql::ConnectOptions` are
+  re-exported so `connect_with` can be called with fixed options instead of
+  `connect()` reading `HTTP_CONNECT_TIMEOUT` / `SQL_DATABASE`.
 
 ### Changed
 
@@ -225,9 +215,18 @@
   keep `DecodeError`; a decoder closure that uses `?` now names its return
   type (`|raw: RawRequest<'_>| -> Result<Input, DecodeError> { .. }`).
 
+- `HttpError::from(omnia_guest::Error)` now emits the JSON `ErrorBody`
+  (`{"error":"<code>","message":"<description>"}`, `application/json`) at
+  the variant's status instead of a plain-text `code: …, description: …`
+  body, so HTTP clients read the same `error` discriminant every transport
+  emits. This also covers `From<DecodeError>` (400 with
+  `error == "invalid_request"`) and the `anyhow::Error` conversion when its
+  chain contains an `omnia_guest::Error`; a foreign `anyhow` error still
+  produces a plain-text 500.
+
 - `omnia_guest::api::command` compiles on every target: only `execute_wasi`
-  (the `wasi:cli/run` driver) stays wasm32-only, so `command!` and
-  `IntoExit` are testable natively.
+  (the `wasi:cli/run` driver) stays wasm32-only, so `command!`, `IntoExit`,
+  `Command`, `Response`, and `Failure` are testable natively.
 
 - `omnia-guest` defaults are now `["orm", "http"]`. A guest that already
   disables default features and routes HTTP must add `features = ["http"]`;
@@ -586,14 +585,6 @@
   and `DeploymentBuilder::dynamic()` are the way a registry grows after
   boot, with registered guests reachable via host-mediated link dispatch
   and `Dispatcher::invoke`
-- `HttpError::from(omnia_guest::Error)` now emits the JSON `ErrorBody`
-  (`{"error":"<code>","message":"<description>"}`, `application/json`) at
-  the variant's status instead of a plain-text `code: …, description: …`
-  body, so HTTP clients read the same `error` discriminant every transport
-  emits. This also covers `From<DecodeError>` (400 with
-  `error == "invalid_request"`) and the `anyhow::Error` conversion when its
-  chain contains an `omnia_guest::Error`; a foreign `anyhow` error still
-  produces a plain-text 500.
 
 ## 0.35.0
 

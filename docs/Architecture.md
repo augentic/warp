@@ -145,7 +145,7 @@ Each crate's `wit/` directory holds the [WIT](https://component-model.bytecodeal
 
 ### Guest SDK (`crates/omnia-guest`, `crates/guest-macros`)
 
-`omnia-guest` defines transport-neutral `Handler`, `Client`, and `Context` plus HTTP and exact-topic messaging routers under `omnia_guest::api`. Applications own their WASI exports and call the matching transport adapter. Command-mode guests parse argv with clap and invoke the same handlers through `Client::call`, wrapping dispatch in `command::execute_wasi`. HTTP-aware errors (`HttpResult`), ORM query builders, and the MCP server module (`mcp::McpServer`, `mcp::router`) remain in `omnia-guest`; `guest-macros` provides only the independent `#[instrument]` tracing attribute.
+`omnia-guest` defines transport-neutral `Handler`, `Client`, and `Context` plus three transport adapters under `omnia_guest::api`: the axum-backed HTTP router (`http`, behind the default `http` feature), the exact-topic messaging router (`messaging`), and the command façade (`command`: `parse` → `Command::call` → `Response`, with `command!` binding the `wasi:cli/run` export; clap-backed parts behind the `command` feature). Applications own their WASI exports and call the matching adapter. Failures share one vocabulary across transports: `Error` maps to an HTTP status and to an exit code (1/2/3/4; clap usage errors exit 64), and both HTTP and the command line emit the same `api::ErrorBody` discriminant. Every transport carrier (`x-request-id` headers, messaging metadata, `Metadata::from_env`) mints a request id when none arrives, and `Client::call` runs the handler in a span carrying it. ORM query builders (`orm` feature) and the MCP server module (`mcp::McpServer`, `mcp::router`) remain in `omnia-guest`; `guest-macros` provides only the independent `#[instrument]` tracing attribute.
 
 ### Host macro (`crates/host-macros`)
 
@@ -214,7 +214,7 @@ omnia/
 ├── crates/
 │   ├── omnia/              # Composition root (assembly, lifecycle, optional crates, runtime!)
 │   ├── omnia-core/         # Live-runtime SDK (engine, registry, dispatch, stores, telemetry)
-│   ├── omnia-guest/        # Guest SDK (Handler/Client/Context, HTTP/messaging routers, errors, ORM, MCP)
+│   ├── omnia-guest/        # Guest SDK (Handler/Client/Context, HTTP/messaging/command adapters, errors, ORM, MCP)
 │   ├── guest-macros/       # #[instrument] proc macro
 │   ├── host-macros/        # runtime! proc-macro
 │   ├── omnia-plugin/       # Plugins capability (loader host + acquisition; re-exported by omnia)

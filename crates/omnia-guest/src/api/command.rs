@@ -99,7 +99,8 @@ macro_rules! command {
                 $crate::api::command::execute_wasi(async {
                     $crate::api::command::IntoExit::into_exit($entry().await)
                 })
-                .await
+                .await;
+                Ok(())
             }
         }
     };
@@ -396,15 +397,10 @@ pub fn completions<A: clap::CommandFactory>(shell: Shell, name: &str) -> Respons
 ///
 /// Initializes guest telemetry, awaits `run`, and flushes telemetry and
 /// stdout. The guest writes its own output; a non-zero status then exits
-/// with that exact code.
-///
-/// # Errors
-///
-/// Returns `Ok(())` when `run` succeeds. A non-zero status is reported
-/// through `wasi:cli/exit` and does not return.
+/// with that exact code through `wasi:cli/exit` and does not return.
 #[cfg(target_arch = "wasm32")]
-#[expect(clippy::result_unit_err, reason = "matches the wasi:cli/run contract")]
-pub async fn execute_wasi(run: impl Future<Output = Result<(), u8>>) -> Result<(), ()> {
+#[doc(hidden)]
+pub async fn execute_wasi(run: impl Future<Output = Result<(), u8>>) {
     let guard = omnia_wasi_otel::init();
     let result = run.await;
     // `exit-with-code` does not return (analogous to a trap), so no
@@ -419,7 +415,6 @@ pub async fn execute_wasi(run: impl Future<Output = Result<(), u8>>) -> Result<(
     {
         wasip3::cli::exit::exit_with_code(code);
     }
-    Ok(())
 }
 
 #[cfg(test)]

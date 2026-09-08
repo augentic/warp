@@ -738,6 +738,30 @@ fn from_lookup_mints_distinct_request_ids() {
     assert_eq!(Metadata::default().request_id, None);
 }
 
+#[test]
+fn from_lookup_reads_every_id() {
+    let metadata = Metadata::from_lookup(|name| match name {
+        "request-id" => Some("req-1".to_owned()),
+        "correlation-id" => Some("corr-1".to_owned()),
+        "causation-id" => Some("cause-1".to_owned()),
+        _ => None,
+    });
+
+    assert_eq!(metadata.request_id.as_deref(), Some("req-1"));
+    assert_eq!(metadata.correlation_id.as_deref(), Some("corr-1"));
+    assert_eq!(metadata.causation_id.as_deref(), Some("cause-1"));
+    assert_eq!(metadata.deadline, None);
+}
+
+#[test]
+fn from_lookup_correlation_falls_back_to_request_id() {
+    let metadata = Metadata::from_lookup(|name| (name == "request-id").then(|| "req-2".to_owned()));
+
+    assert_eq!(metadata.request_id.as_deref(), Some("req-2"));
+    assert_eq!(metadata.correlation_id.as_deref(), Some("req-2"));
+    assert_eq!(metadata.causation_id, None);
+}
+
 #[derive(Debug)]
 struct Fetch {
     id: String,

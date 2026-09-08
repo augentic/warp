@@ -56,10 +56,13 @@ impl Metadata {
     /// missing request id is minted as on every transport.
     #[must_use]
     pub fn from_env(prefix: &str) -> Self {
-        Self::from_lookup(|name| {
-            std::env::var(format!("{prefix}_{}", name.to_ascii_uppercase().replace('-', "_"))).ok()
-        })
+        Self::from_lookup(|name| std::env::var(env_key(prefix, name)).ok())
     }
+}
+
+// The environment variable carrying the metadata field `name` under `prefix`.
+fn env_key(prefix: &str, name: &str) -> String {
+    format!("{prefix}_{}", name.to_ascii_uppercase().replace('-', "_"))
 }
 
 /// Wires an `async fn` as the guest's `wasi:cli/run` export, driven through
@@ -423,7 +426,14 @@ pub async fn execute_wasi(run: impl Future<Output = Result<(), u8>>) -> Result<(
 mod tests {
     use std::io::{self, ErrorKind, Write};
 
-    use super::write_channel;
+    use super::{env_key, write_channel};
+
+    #[test]
+    fn env_key_prefixes_and_upper_snakes() {
+        assert_eq!(env_key("CLI", "request-id"), "CLI_REQUEST_ID");
+        assert_eq!(env_key("CLI", "correlation-id"), "CLI_CORRELATION_ID");
+        assert_eq!(env_key("EXIT_MAP", "causation-id"), "EXIT_MAP_CAUSATION_ID");
+    }
 
     struct Refusing(ErrorKind);
 

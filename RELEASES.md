@@ -150,6 +150,24 @@
   `clap::ValueEnum` under it so a `--format text|json` argument parses
   directly.
 
+- The command façade's output contract in `omnia_guest::api::command`:
+  `Response { stdout, stderr, exit }` (`success(stdout)` /
+  `failure(stderr, exit)`) buffers both channels and implements `IntoExit`,
+  so a `command!` entry can return it directly — the channels are written
+  at the exit boundary, a `BrokenPipe` on either keeps the response's own
+  exit, and any other refused channel exits 3 (`ServerError`). `Failure` is
+  the failure envelope over an `omnia_guest::Error` (`From<Error>`,
+  `From<anyhow::Error>`) with an optional remedy `with_hint(..)`: it
+  serializes flat as `{"error","message","exit-code","hint"?}` and renders
+  as text through `Failure::text` (`error[<code>]: <message>` then
+  `hint: <hint>`). `USAGE_EXIT = 64` (`EX_USAGE`) is the exit of a clap
+  usage error, so exit 2 always means a `NotFound` envelope. Under the
+  `command` feature: `parse::<App>(argv) -> Parsed { App, Display, Usage }`
+  classifies clap's own outcomes (help/version text for stdout at exit 0
+  versus a usage error), `Response::usage(&clap::Error)` renders the latter
+  at `USAGE_EXIT`, `completions::<App>(shell, name)` produces a
+  shell-completion script, and `clap_complete::Shell` is re-exported.
+
 ### Changed
 
 - `omnia_guest::api::command` compiles on every target: only `execute_wasi`

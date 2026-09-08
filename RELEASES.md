@@ -224,6 +224,17 @@
   disables default features and routes HTTP must add `features = ["http"]`;
   a default build is unchanged.
 
+- The `examples/cli` guest (shared by `cli-static`) runs on the command
+  façade: `command!(main)` over `parse` → `Command::new(..).call(handler,
+  decode, render)`, with a global `--format text|json` and
+  `Metadata::from_env("CLI")`. Its hand-written `CommandError` is gone —
+  handlers return `omnia_guest::Error` — so exit codes now follow the exit
+  map rather than being chosen by the guest: `fail [CLASS]` takes
+  `bad-request` / `not-found` / `server-error` (default) / `bad-gateway`
+  and exits 1 / 2 / 3 / 4 with the `Failure` envelope on stderr, and a clap
+  usage error (`bogus`) exits 64 instead of 2. The smoke scenarios and both
+  READMEs follow.
+
 - Guest handlers are fns bound at the route, over an owned context.
   `omnia_guest::api::Context<P>` drops its lifetime and `Copy`: it owns
   `Arc<str>` / `Arc<P>` clones plus the `Metadata`, exposes `owner()` and

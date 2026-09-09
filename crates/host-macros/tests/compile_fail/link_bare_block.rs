@@ -1,7 +1,5 @@
 omnia_host_macros::runtime!({
-    plugin: {
-        locations: [],
-    },
+    link: {},
     guests: [
         { id: "api", source: "api.wasm" },
     ],

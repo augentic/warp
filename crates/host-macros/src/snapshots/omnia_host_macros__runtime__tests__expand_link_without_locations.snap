@@ -1,6 +1,6 @@
 ---
 source: crates/host-macros/src/runtime.rs
-expression: "expand_pretty(quote!({\n    plugins: { interfaces: [\"emery:adapter/probe\"] }, guests:\n    [{ id: \"engine\", source: \"engine.wasm\" },],\n}))"
+expression: "expand_pretty(quote!({\n    link: { interfaces: [\"emery:adapter/probe\"] }, guests:\n    [{ id: \"engine\", source: \"engine.wasm\" },],\n}))"
 ---
 mod runtime {
     use omnia::anyhow::Result;

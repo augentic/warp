@@ -1,5 +1,0 @@
-error: `plugins: {}` declares nothing; add `interfaces:` or `locations:`, or pair it with `config:` to install the config file's `[[location]]` entries
- --> tests/compile_fail/plugins_bare_block.rs:2:5
-  |
-2 |     plugins: {},
-  |     ^^^^^^^

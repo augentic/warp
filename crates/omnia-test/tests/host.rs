@@ -42,8 +42,8 @@ mod production_plugins {
 
     omnia::runtime!({
         mode: command,
-        plugins: {
-            interfaces: ["omnia-test:link/ops"],
+        link: { interfaces: ["omnia-test:link/ops"] },
+        plugin: {
             locations: [{ name: ".", path: "/nonexistent/adapters" }],
         },
         guests: [{ id: "requester", source: test_programs::PLUGINS_LOAD_PATH }],

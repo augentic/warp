@@ -1,4 +1,4 @@
-error: host-mediated interfaces are deployment-wide; declare them with the top-level `plugins: { interfaces: [...] }` block, not on a guest entry
+error: host-mediated interfaces are deployment-wide; declare them with the top-level `link: { interfaces: [...] }` block, not on a guest entry
  --> tests/compile_fail/per_guest_dispatch.rs:3:48
   |
 3 |         { id: "router", source: "router.wasm", dispatch: ["omnia:link/echo"] },

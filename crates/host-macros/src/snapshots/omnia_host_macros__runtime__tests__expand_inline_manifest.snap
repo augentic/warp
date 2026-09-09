@@ -1,6 +1,6 @@
 ---
 source: crates/host-macros/src/runtime.rs
-expression: "expand_pretty(quote!({\n    plugins: { interfaces: [\"omnia:link/echo\"] }, guests:\n    [{\n        id: \"responder\", source:\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/responder.wasm\"), routes:\n        { messaging: [\"orders.>\"], websocket: [\"chat.*\"], },\n    },\n    {\n        id: \"router\", source:\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/router.wasm\"), routes:\n        { http: [\"/\", concat!(\"/\", \"api\")], },\n    },], mounts:\n    [{\n        name: \".\", path: concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/workspace\"),\n        writable: true\n    },], hosts: { WasiOtel: OtelDefault, },\n}))"
+expression: "expand_pretty(quote!({\n    link: { interfaces: [\"omnia:link/echo\"] }, guests:\n    [{\n        id: \"responder\", source:\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/responder.wasm\"), routes:\n        { messaging: [\"orders.>\"], websocket: [\"chat.*\"], },\n    },\n    {\n        id: \"router\", source:\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/router.wasm\"), routes:\n        { http: [\"/\", concat!(\"/\", \"api\")], },\n    },], mounts:\n    [{\n        name: \".\", path: concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/workspace\"),\n        writable: true\n    },], hosts: { WasiOtel: OtelDefault, },\n}))"
 ---
 mod runtime {
     use omnia::anyhow::Result;

@@ -23,12 +23,12 @@ pub enum LoadError {
 impl LoadError {
     // The shared refusal for a deployment that linked the loader host but
     // installed no `Plugins` extension: either the macro's `locations:` list
-    // was never declared, or a bare `plugins: {}` beside `config:` pointed at
-    // a TOML with no `[[location]]` entries.
+    // was never declared, or a bare `plugin: {}` beside `config:` pointed at
+    // a TOML with no `[[plugin.location]]` entries.
     pub(crate) fn no_plugins(package: &str) -> Self {
         Self::Internal(format!(
-            "this deployment has no plugins; declare a location (`plugins: {{ locations: [...] \
-             }}` inline, or `[[location]]` in the config file) to load `{package}`"
+            "this deployment has no plugins; declare a location (`plugin: {{ locations: [...] \
+             }}` inline, or `[[plugin.location]]` in the config file) to load `{package}`"
         ))
     }
 }

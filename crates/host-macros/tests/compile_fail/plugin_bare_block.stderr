@@ -1,0 +1,5 @@
+error: `plugin: {}` declares nothing; add `locations:`, or pair it with `config:` to install the config file's `[[plugin.location]]` entries
+ --> tests/compile_fail/plugin_bare_block.rs:2:5
+  |
+2 |     plugin: {},
+  |     ^^^^^^

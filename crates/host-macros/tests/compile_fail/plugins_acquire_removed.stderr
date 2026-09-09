@@ -1,5 +1,5 @@
-error: unknown plugins key `acquire`; expected `interfaces` or `locations`
- --> tests/compile_fail/plugins_acquire_removed.rs:4:9
+error: unknown plugin key `acquire`; expected `locations`
+ --> tests/compile_fail/plugins_acquire_removed.rs:3:9
   |
-4 |         acquire: MountAcquire,
+3 |         acquire: MountAcquire,
   |         ^^^^^^^

@@ -1,0 +1,5 @@
+error: the `plugins:` key was split; declare host-mediated interfaces with `link: { interfaces: [...] }` and plugin locations with `plugin: { locations: [...] }`
+ --> tests/compile_fail/plugins_interfaces_moved.rs:2:5
+  |
+2 |     plugins: { interfaces: ["omnia:shared/log"] },
+  |     ^^^^^^^

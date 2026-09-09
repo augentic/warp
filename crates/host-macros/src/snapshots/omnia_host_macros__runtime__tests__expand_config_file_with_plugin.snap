@@ -1,6 +1,6 @@
 ---
 source: crates/host-macros/src/runtime.rs
-expression: "expand_pretty(quote!({\n    config: concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/omnia.toml\"), plugins: {},\n    hosts: { WasiOtel: OtelDefault, },\n}))"
+expression: "expand_pretty(quote!({\n    config: concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/omnia.toml\"), plugin: {},\n    hosts: { WasiOtel: OtelDefault, },\n}))"
 ---
 mod runtime {
     use omnia::anyhow::Result;

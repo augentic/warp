@@ -148,8 +148,8 @@ fn wit_copies_stay_identical() {
 // suite pins the expansion shape; this pins the types and the carried data.
 mod locations_grammar {
     omnia::runtime!({
-        plugins: {
-            interfaces: ["omnia-test:link/ops"],
+        link: { interfaces: ["omnia-test:link/ops"] },
+        plugin: {
             locations: [
                 { name: "adapters", path: "adapters" },
                 { registry: "ghcr.io" },

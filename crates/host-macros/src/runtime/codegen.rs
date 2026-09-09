@@ -24,7 +24,7 @@ pub struct Codegen {
     /// Whether to link the `omnia::WasiPlugins` loader host and install the
     /// declared locations — a `locations:` list means the deployment opted
     /// into the loader capability (and into `omnia`'s `plugin` feature).
-    pub link_plugins: bool,
+    pub link_loader: bool,
 }
 
 impl From<&Config> for Codegen {
@@ -46,7 +46,7 @@ impl From<&Config> for Codegen {
             backends_def,
             main_options,
             manifest,
-            link_plugins: config.link_loader,
+            link_loader: config.link_loader,
         }
     }
 }
@@ -85,7 +85,7 @@ fn emit_manifest(config: &Config) -> Option<TokenStream> {
 
 /// Emit the fluent `omnia::Manifest` builder chain for the inline keys.
 fn emit_manifest_builder(manifest: &ManifestSpec) -> TokenStream {
-    let plugins = manifest.plugins.iter().map(|interface| {
+    let interfaces = manifest.interfaces.iter().map(|interface| {
         quote! {
             .link([#interface])
         }
@@ -134,7 +134,7 @@ fn emit_manifest_builder(manifest: &ManifestSpec) -> TokenStream {
 
     quote! {
         omnia::Manifest::new()
-            #(#plugins)*
+            #(#interfaces)*
             #(#locations)*
             #(#guests)*
             #(#mounts)*

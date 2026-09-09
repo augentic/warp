@@ -35,10 +35,10 @@ pub struct Config {
     pub config_file: Option<Expr>,
     pub manifest: ManifestSpec,
     /// Whether the deployment declares plugin locations — inline through the
-    /// `plugins:` block's `locations:` list, or in the config file when a
-    /// bare `plugins:` block accompanies `config:`. Either links the
+    /// `plugin:` block's `locations:` list, or in the config file when a
+    /// bare `plugin:` block accompanies `config:`. Either links the
     /// `WasiPlugins` loader host and installs the locations, which requires
-    /// `omnia`'s `plugin` feature; an interfaces-only block never references
+    /// `omnia`'s `plugin` feature; a `link:`-only invocation never references
     /// the loader.
     pub link_loader: bool,
 }
@@ -53,23 +53,28 @@ pub struct HostEntry {
     pub options: Option<Expr>,
 }
 
-/// Inline manifest keys (`plugins` interfaces and locations, `guests`,
+/// Inline manifest keys (`link` interfaces, `plugin` locations, `guests`,
 /// `mounts`) parsed from `runtime!({ ... })`; mirrors the `omnia::Manifest`
 /// schema.
 #[derive(Default)]
 pub struct ManifestSpec {
-    pub plugins: Vec<Expr>,
+    pub interfaces: Vec<Expr>,
     pub locations: Vec<LocationSpec>,
     pub guests: Vec<GuestSpec>,
     pub mounts: Vec<MountSpec>,
 }
 
-/// The `plugins: { interfaces: [...], locations: [...] }` block: the
-/// deployment's host-mediated interface set plus its acquisition
-/// locations, both manifest data.
+/// The `link: { interfaces: [...] }` block: the deployment's host-mediated
+/// interface set.
 #[derive(Default)]
-pub struct PluginsSpec {
+pub struct LinkSpec {
     pub interfaces: Vec<Expr>,
+}
+
+/// The `plugin: { locations: [...] }` block: the deployment's loader
+/// acquisition locations.
+#[derive(Default)]
+pub struct PluginSpec {
     pub locations: Vec<LocationSpec>,
 }
 
@@ -89,7 +94,7 @@ pub enum LocationSpec {
 
 impl ManifestSpec {
     pub const fn is_empty(&self) -> bool {
-        self.plugins.is_empty()
+        self.interfaces.is_empty()
             && self.locations.is_empty()
             && self.guests.is_empty()
             && self.mounts.is_empty()
@@ -128,7 +133,8 @@ impl Parse for Config {
         let mut host_entries = Vec::new();
         let mut config_file = None;
         let mut manifest = ManifestSpec::default();
-        let mut plugins_span: Option<Span> = None;
+        let mut plugin_span: Option<Span> = None;
+        let mut link_span: Option<Span> = None;
         let mut config_span: Option<Span> = None;
         let mut inline_span: Option<Span> = None;
 
@@ -150,16 +156,22 @@ impl Parse for Config {
                     config_file = Some(c);
                     config_span = Some(span);
                 }
-                OptValue::Plugins(p) => {
-                    plugins_span = Some(span);
-                    // Interfaces and locations are both manifest data, so
-                    // either conflicts with `config:`; a bare `plugins: {}`
-                    // is only meaningful beside `config:`, where it opts into
-                    // the loader over the TOML's `[[location]]` entries.
-                    if !p.interfaces.is_empty() || !p.locations.is_empty() {
+                OptValue::Link(p) => {
+                    link_span = Some(span);
+                    if !p.interfaces.is_empty() {
                         inline_span.get_or_insert(span);
                     }
-                    manifest.plugins = p.interfaces;
+                    manifest.interfaces = p.interfaces;
+                }
+                OptValue::Plugin(p) => {
+                    plugin_span = Some(span);
+                    // Locations are manifest data, so they conflict with
+                    // `config:`; a bare `plugin: {}` is only meaningful beside
+                    // `config:`, where it opts into the loader over the TOML's
+                    // `[[plugin.location]]` entries.
+                    if !p.locations.is_empty() {
+                        inline_span.get_or_insert(span);
+                    }
                     manifest.locations = p.locations;
                 }
                 OptValue::Guests(g) => {
@@ -173,26 +185,36 @@ impl Parse for Config {
             }
         }
 
-        // A bare `plugins: {}` declares nothing inline and, without `config:`,
+        // A bare `link: {}` declares nothing: the seam needs no host linking,
+        // so an empty block would expand to nothing at all.
+        if let Some(span) = link_span
+            && manifest.interfaces.is_empty()
+        {
+            return Err(syn::Error::new(
+                span,
+                "`link: {}` declares nothing; add `interfaces: [\"ns:pkg/iface\"]`",
+            ));
+        }
+
+        // A bare `plugin: {}` declares nothing inline and, without `config:`,
         // has no TOML to defer to — it would expand to nothing at all.
-        if let Some(span) = plugins_span
-            && manifest.plugins.is_empty()
+        if let Some(span) = plugin_span
             && manifest.locations.is_empty()
             && config_file.is_none()
         {
             return Err(syn::Error::new(
                 span,
-                "`plugins: {}` declares nothing; add `interfaces:` or `locations:`, or pair it \
-                 with `config:` to install the config file's `[[location]]` entries",
+                "`plugin: {}` declares nothing; add `locations:`, or pair it with `config:` to \
+                 install the config file's `[[plugin.location]]` entries",
             ));
         }
 
         // Only declared locations opt into the loader: inline ones
-        // (`PluginsSpec::validate` already refuses an empty list), or the
-        // config file's when a `plugins:` block accompanies `config:`. An
-        // interfaces-only block is plain manifest data.
+        // (`PluginSpec::validate` already refuses an empty list), or the
+        // config file's when a `plugin:` block accompanies `config:`. A
+        // `link:`-only invocation is plain manifest data.
         let link_loader =
-            !manifest.locations.is_empty() || (plugins_span.is_some() && config_file.is_some());
+            !manifest.locations.is_empty() || (plugin_span.is_some() && config_file.is_some());
         let config = Self {
             mode,
             host_entries,
@@ -220,9 +242,9 @@ impl Config {
         if let (Some(_), Some(inline)) = (spans.config, spans.inline) {
             return Err(syn::Error::new(
                 inline,
-                "`config:` and inline manifest keys (`plugins` interfaces and locations, \
-                 `guests`, `mounts`) are mutually exclusive; declare `[[location]]` entries in \
-                 the config file",
+                "`config:` and inline manifest keys (`link` interfaces, `plugin` locations, \
+                 `guests`, `mounts`) are mutually exclusive; declare `[[plugin.location]]` \
+                 entries in the config file",
             ));
         }
 
@@ -272,6 +294,7 @@ mod kw {
     syn::custom_keyword!(mode);
     syn::custom_keyword!(hosts);
     syn::custom_keyword!(config);
+    syn::custom_keyword!(plugin);
     syn::custom_keyword!(plugins);
     syn::custom_keyword!(guests);
     syn::custom_keyword!(mounts);
@@ -292,7 +315,8 @@ enum OptValue {
     Mode(Mode),
     Hosts(Vec<HostEntry>),
     Config(Expr),
-    Plugins(PluginsSpec),
+    Link(LinkSpec),
+    Plugin(PluginSpec),
     Guests(Vec<GuestSpec>),
     Mounts(Vec<MountSpec>),
 }
@@ -314,18 +338,26 @@ impl Parse for Opt {
             let key = input.parse::<kw::config>()?;
             input.parse::<Token![:]>()?;
             ("config", key.span, OptValue::Config(input.parse()?))
-        } else if l.peek(kw::plugins) {
-            let key = input.parse::<kw::plugins>()?;
+        } else if l.peek(kw::link) {
+            let key = input.parse::<kw::link>()?;
             input.parse::<Token![:]>()?;
-            // A pointed migration diagnostic for the removed bare-list form.
             if input.peek(syn::token::Bracket) {
                 return Err(syn::Error::new(
                     key.span,
-                    "the `plugins:` key takes a block: `plugins: { interfaces: \
-                     [\"ns:pkg/iface\"], locations: [...] }` (`locations` is optional)",
+                    "the `link:` key takes a block: `link: { interfaces: [\"ns:pkg/iface\"] }`",
                 ));
             }
-            ("plugins", key.span, OptValue::Plugins(input.parse()?))
+            ("link", key.span, OptValue::Link(input.parse()?))
+        } else if l.peek(kw::plugin) {
+            let key = input.parse::<kw::plugin>()?;
+            input.parse::<Token![:]>()?;
+            if input.peek(syn::token::Bracket) {
+                return Err(syn::Error::new(
+                    key.span,
+                    "the `plugin:` key takes a block: `plugin: { locations: [...] }`",
+                ));
+            }
+            ("plugin", key.span, OptValue::Plugin(input.parse()?))
         } else if l.peek(kw::guests) {
             let key = input.parse::<kw::guests>()?;
             input.parse::<Token![:]>()?;
@@ -343,21 +375,19 @@ impl Parse for Opt {
                 "the top-level `routes:` key was removed; declare routes on each guest entry \
                  (`guests: [{ id: ..., source: ..., routes: { http: [...] } }]`)",
             ));
-        } else if input.peek(kw::link) {
-            // Same treatment for the renamed `link:` key.
-            let key = input.parse::<kw::link>()?;
+        } else if input.peek(kw::plugins) {
+            let key = input.parse::<kw::plugins>()?;
             return Err(syn::Error::new(
                 key.span,
-                "the `link:` key was renamed; declare host-mediated interfaces with the \
-                 top-level `plugins: { interfaces: [...] }` block",
+                "the `plugins:` key was split; declare host-mediated interfaces with `link: { \
+                 interfaces: [...] }` and plugin locations with `plugin: { locations: [...] }`",
             ));
         } else if input.peek(kw::dispatch) {
-            // And for the renamed `dispatch:` key.
             let key = input.parse::<kw::dispatch>()?;
             return Err(syn::Error::new(
                 key.span,
                 "the `dispatch:` key was renamed; declare host-mediated interfaces with the \
-                 top-level `plugins: { interfaces: [...] }` block",
+                 top-level `link: { interfaces: [...] }` block",
             ));
         } else {
             return Err(l.error());
@@ -469,7 +499,7 @@ impl Parse for GuestSpec {
                     return Err(syn::Error::new(
                         key.span(),
                         "host-mediated interfaces are deployment-wide; declare them with the \
-                         top-level `plugins: { interfaces: [...] }` block, not on a guest entry",
+                         top-level `link: { interfaces: [...] }` block, not on a guest entry",
                     ));
                 }
                 other => {
@@ -496,19 +526,52 @@ impl Parse for GuestSpec {
     }
 }
 
-impl Parse for PluginsSpec {
+impl Parse for LinkSpec {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut spec = Self::default();
+
+        parse_kv_block(input, |key, value| {
+            match key.to_string().as_str() {
+                "interfaces" => spec.interfaces = parse_bracketed_list(value)?,
+                "locations" => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "plugin locations belong in `plugin: { locations: [...] }`, not in \
+                         `link:`",
+                    ));
+                }
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!("unknown link key `{other}`; expected `interfaces`"),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+
+        Ok(spec)
+    }
+}
+
+impl Parse for PluginSpec {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut spec = Self::default();
         let mut locations_span = None;
 
         parse_kv_block(input, |key, value| {
             match key.to_string().as_str() {
-                "interfaces" => spec.interfaces = parse_bracketed_list(value)?,
                 "locations" => {
                     spec.locations = parse_bracketed_list(value)?;
                     locations_span = Some(key.span());
                 }
-                // A pointed migration diagnostic for the removed store option.
+                "interfaces" => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "host-mediated interfaces belong in `link: { interfaces: [...] }`, not \
+                         in `plugin:`",
+                    ));
+                }
                 "cache" => {
                     return Err(syn::Error::new(
                         key.span(),
@@ -521,9 +584,7 @@ impl Parse for PluginsSpec {
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
-                        format!(
-                            "unknown plugins key `{other}`; expected `interfaces` or `locations`"
-                        ),
+                        format!("unknown plugin key `{other}`; expected `locations`"),
                     ));
                 }
             }
@@ -535,7 +596,7 @@ impl Parse for PluginsSpec {
     }
 }
 
-impl PluginsSpec {
+impl PluginSpec {
     /// The block's cross-key refusals, spanned to the offending key.
     fn validate(&self, locations_span: Option<Span>) -> Result<()> {
         if let Some(span) = locations_span

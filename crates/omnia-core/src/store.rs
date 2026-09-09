@@ -71,8 +71,8 @@ pub struct StoreBase {
     /// [`Store`]: wasmtime::Store
     pub limits: StoreLimits,
     /// Per-store wRPC view state for host-mediated dynamic linking; inert
-    /// unless the deployment declares link interfaces (the manifest `plugins`
-    /// list). Present only under the `wrpc` feature.
+    /// unless the deployment declares link interfaces (the manifest `[link]
+    /// interfaces` list). Present only under the `wrpc` feature.
     #[cfg(feature = "wrpc")]
     pub wrpc: WrpcState,
     /// Type-erased host->guest dispatcher; a fresh handle to the owning

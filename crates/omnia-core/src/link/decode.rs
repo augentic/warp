@@ -2,7 +2,7 @@
 //!
 //! [`wrpc_wasmtime::read_value`] needs `StoreContextMut` only in its
 //! resource/stream arms — values the dispatch path already rejects at the link
-//! seam. The concurrent polyfill ([`super::link`]) can therefore decode results
+//! seam. The concurrent polyfill ([`super::polyfill`]) can therefore decode results
 //! without holding the store across an await, which `Accessor::with` forbids.
 //! Each arm mirrors `read_value` so the wire codec stays byte-identical.
 

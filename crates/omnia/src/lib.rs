@@ -34,13 +34,14 @@ pub use futures;
 pub use omnia_cli::{Cli, Command, Parser};
 #[doc(inline)]
 pub use omnia_core::{
-    AdmitError, Backend, CliRoutes, Dispatcher, ExitStatus, Extensions, FirstArgSelector, FromEnv,
-    FutureResult, Guest, GuestArtifact, GuestId, GuestSelector, HasDispatcher, HasExtensions,
-    HasLimits, HasMounts, HasTable, Host, HostCtx, HttpBorrow, HttpCtx, HttpRoutes, LinkClient,
-    Location, LogMode, MountRegistry, NoOptions, PatternRoutes, Provides, Proxy, Registry,
-    ResolvedPreopen, Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreBase, StoreConfig,
-    StoreCtx, StoreView, Telemetry, TriggerRouter, WeakRuntime, WrpcState, as_command_chain,
-    get_cloned, host_error, serve_links, sha256_digest, telemetry, wasi_view,
+    AdmitError, Backend, ChainPolicy, CliRoutes, Dispatcher, ExitStatus, Extensions,
+    FirstArgSelector, FromEnv, FutureResult, Guest, GuestArtifact, GuestId, GuestSelector,
+    HasDispatcher, HasExtensions, HasLimits, HasMounts, HasTable, Host, HostCtx, HttpBorrow,
+    HttpCtx, HttpRoutes, InProcessLinks, LinkClient, LinkSeam, Location, LogMode, MountRegistry,
+    NoLinks, NoOptions, PatternRoutes, Provides, Proxy, Registry, ResolvedPreopen, Routes, Runtime,
+    RuntimeOptions, RuntimeParts, Server, StoreBase, StoreConfig, StoreCtx, StoreFactory,
+    StoreView, Telemetry, TriggerRouter, WeakRuntime, WrpcState, as_command_chain, get_cloned,
+    host_error, serve_links, sha256_digest, telemetry, wasi_view,
 };
 #[doc(hidden)]
 pub use omnia_core::{WrpcCtxView, WrpcView, pastey, tokio, wasmtime, wasmtime_wasi};

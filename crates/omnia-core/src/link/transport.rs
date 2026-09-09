@@ -145,7 +145,7 @@ impl InProcess {
     /// no-op when nothing is pending. A refused pending endpoint is dropped.
     ///
     /// The caller must hold the registry's lifecycle write guard.
-    pub(crate) fn publish(&self, target: &GuestId) -> Result<()> {
+    pub(super) fn publish(&self, target: &GuestId) -> Result<()> {
         let mut endpoints = self.endpoints.write().unwrap_or_else(PoisonError::into_inner);
         let Some(endpoint) = endpoints.pending.remove(target) else {
             return Ok(());
@@ -163,7 +163,7 @@ impl InProcess {
     /// aborting its drain tasks.
     ///
     /// The caller must hold the registry's lifecycle write guard.
-    pub(crate) fn discard(&self, target: &GuestId) {
+    pub(super) fn discard(&self, target: &GuestId) {
         self.endpoints.write().unwrap_or_else(PoisonError::into_inner).pending.remove(target);
     }
 
@@ -171,14 +171,14 @@ impl InProcess {
     /// invocations hold their own server [`Arc`] and complete.
     ///
     /// The caller must hold the registry's lifecycle write guard.
-    pub(crate) fn remove(&self, target: &GuestId) {
+    pub(super) fn remove(&self, target: &GuestId) {
         self.endpoints.write().unwrap_or_else(PoisonError::into_inner).live.remove(target);
     }
 
     /// Drop every pending and live endpoint, aborting all drain tasks, so a
     /// finished deployment releases the `Runtime` clones (and the engine) they
     /// pin.
-    pub(crate) fn clear(&self) {
+    pub(super) fn clear(&self) {
         let mut endpoints = self.endpoints.write().unwrap_or_else(PoisonError::into_inner);
         endpoints.pending.clear();
         endpoints.live.clear();

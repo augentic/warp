@@ -1,6 +1,6 @@
 //! Linker polyfill for host-mediated imports.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter::zip;
 use std::pin::pin;
 use std::sync::Arc;
@@ -14,10 +14,10 @@ use wasmtime_wasi::WasiView;
 use wrpc_transport::Invoke;
 use wrpc_wasmtime::{ValEncoder, WrpcView, read_value};
 
-use super::handle::DispatchHandle;
-use super::transport::LinkTransport as _;
-use super::value::read_plain_value;
-use crate::artifact::LoadedGuest;
+use super::decode::read_plain_value;
+use super::selector::GuestSelector;
+use super::transport::{InProcess, LinkTransport as _};
+use crate::chain::ChainPolicy;
 use crate::registry::GuestId;
 use crate::value::contains_resource;
 
@@ -27,68 +27,27 @@ use crate::value::contains_resource;
 /// interface then function name; the value is the function's type-level
 /// asyncness, so a later guest whose import disagrees is rejected instead of
 /// failing wasmtime's pre-instantiation typecheck with no cross-guest context.
-pub type WiredLinks = BTreeMap<Box<str>, BTreeMap<Box<str>, bool>>;
+pub(super) type WiredLinks = BTreeMap<Box<str>, BTreeMap<Box<str>, bool>>;
 
-/// Polyfill every host-mediated import named in the deployment's declared
-/// link interfaces onto the shared linker, bound to the dispatch handle,
-/// returning the functions wired per interface.
+/// The caller-side state every polyfilled import shares: the selector
+/// strategy, the chain policy, and the bound transport carrier.
+pub(super) struct Caller {
+    pub(super) selector: Arc<dyn GuestSelector>,
+    pub(super) policy: ChainPolicy,
+    pub(super) transport: InProcess,
+}
+
+/// Polyfill one component's imports of the declared `interfaces` not already
+/// in `wired`, bound to `caller`.
 ///
 /// Each function is linked exactly once (the linker is shared, so the
 /// per-guest imports are unioned function-by-function, reopening an
 /// interface's [`LinkerInstance`](wasmtime::component::LinkerInstance) as
 /// later guests add functions). `wasi:*` imports are never touched here —
 /// they are host-satisfied — so only the manifest-declared interfaces are
-/// dispatched.
-///
-/// Runs *before* pre-instantiation, so an import that is neither host-satisfied
-/// nor allow-listed remains unresolved and fails fast at `instantiate_pre`.
-///
-/// # Errors
-///
-/// Returns an error if a named link target is not an interface import, or if a
-/// function cannot be defined on the linker.
-pub fn link<T>(
-    engine: &Engine, linker: &mut Linker<T>, guests: &[LoadedGuest], handle: &Arc<DispatchHandle>,
-) -> Result<WiredLinks>
-where
-    T: WasiView + WrpcView + 'static,
-{
-    let mut wired = WiredLinks::new();
-    if handle.links().is_empty() {
-        return Ok(wired);
-    }
-
-    for LoadedGuest { id, component } in guests {
-        polyfill_component(engine, linker, id, component, handle, &mut wired)?;
-    }
-    Ok(wired)
-}
-
-/// Polyfill a late (dynamically registered) component's allow-listed imports
-/// onto `linker` — a clone of the shared linker, so the functions the
-/// bootstrap already `wired` are skipped and the shared linker is never
-/// mutated after assembly.
-///
-/// # Errors
-///
-/// Returns an error if a named link target is not an interface import, or if a
-/// function cannot be defined on the linker.
-pub fn polyfill_late<T>(
-    engine: &Engine, linker: &mut Linker<T>, id: &GuestId,
-    component: &wasmtime::component::Component, handle: &Arc<DispatchHandle>,
-    bootstrap_wired: &WiredLinks,
-) -> Result<()>
-where
-    T: WasiView + WrpcView + 'static,
-{
-    if handle.links().is_empty() {
-        return Ok(());
-    }
-    let mut wired = bootstrap_wired.clone();
-    polyfill_component(engine, linker, id, component, handle, &mut wired)
-}
-
-/// Polyfill one component's link-union imports not already in `wired`.
+/// dispatched. Runs *before* pre-instantiation, so an import that is neither
+/// host-satisfied nor allow-listed remains unresolved and fails fast at
+/// `instantiate_pre`.
 ///
 /// Registration matches the import's type-level asyncness: a plain `func` is
 /// polyfilled with `func_new_async` ([`send`]), an `async func` with
@@ -96,17 +55,22 @@ where
 /// would fail the pre-instantiation asyncness typecheck. A function an
 /// earlier guest wired with the *other* asyncness is a cross-guest interface
 /// disagreement, rejected here with both views named.
-fn polyfill_component<T>(
+///
+/// # Errors
+///
+/// Returns an error if a named link target is not an interface import, or if a
+/// function cannot be defined on the linker.
+pub(super) fn polyfill_component<T>(
     engine: &Engine, linker: &mut Linker<T>, id: &GuestId,
-    component: &wasmtime::component::Component, handle: &Arc<DispatchHandle>,
-    wired: &mut WiredLinks,
+    component: &wasmtime::component::Component, interfaces: &BTreeSet<Box<str>>,
+    caller: &Arc<Caller>, wired: &mut WiredLinks,
 ) -> Result<()>
 where
     T: WasiView + WrpcView + 'static,
 {
     let component_ty = component.component_type();
     for (name, types::ComponentExtern { ty, .. }) in component_ty.imports(engine) {
-        if !handle.links().contains(name) {
+        if !interfaces.contains(name) {
             continue;
         }
         let types::ComponentItem::ComponentInstance(instance_ty) = ty else {
@@ -146,18 +110,18 @@ where
         let iface_name: Arc<str> = Arc::from(name);
 
         for (func, is_async) in &funcs {
-            let handle = Arc::clone(handle);
+            let caller = Arc::clone(caller);
             let iface_name = Arc::clone(&iface_name);
             let func_name = Arc::clone(func);
             let registered = if *is_async {
                 interface.func_new_concurrent(func, move |accessor, ty, params, results| {
-                    let handle = Arc::clone(&handle);
+                    let caller = Arc::clone(&caller);
                     let iface_name = Arc::clone(&iface_name);
                     let func_name = Arc::clone(&func_name);
                     Box::pin(async move {
                         send_concurrent(
                             accessor,
-                            &handle,
+                            &caller,
                             &iface_name,
                             &func_name,
                             &ty,
@@ -170,11 +134,11 @@ where
                 })
             } else {
                 interface.func_new_async(func, move |store, ty, params, results| {
-                    let handle = Arc::clone(&handle);
+                    let caller = Arc::clone(&caller);
                     let iface_name = Arc::clone(&iface_name);
                     let func_name = Arc::clone(&func_name);
                     Box::new(async move {
-                        send(store, &handle, &iface_name, &func_name, &ty, params, results)
+                        send(store, &caller, &iface_name, &func_name, &ty, params, results)
                             .await
                             .map_err(wasmtime::Error::from_anyhow)
                     })
@@ -206,12 +170,11 @@ struct Call<'a> {
 /// Shared per-call preamble: select the target, reject crossing resources,
 /// take a depth slot, and open the client connection.
 fn prepare<'a>(
-    handle: &DispatchHandle, interface: &str, func: &str, ty: &types::ComponentFunc,
-    params: &'a [Val],
+    caller: &Caller, interface: &str, func: &str, ty: &types::ComponentFunc, params: &'a [Val],
 ) -> Result<Call<'a>> {
     let start = std::time::Instant::now();
 
-    let (target, forwarded) = handle
+    let (target, forwarded) = caller
         .selector
         .select(interface, func, params)
         .with_context(|| format!("selecting target for `{interface}/{func}`"))?;
@@ -226,7 +189,7 @@ fn prepare<'a>(
         }
     }
 
-    let ctx = handle.policy.enter(&target)?;
+    let ctx = caller.policy.enter(&target)?;
 
     let param_types: Vec<Type> = ty.params().map(|(_, ty)| ty).collect();
     let result_types: Vec<Type> = ty.results().collect();
@@ -237,7 +200,7 @@ fn prepare<'a>(
         param_types.len()
     );
 
-    let client = handle.transport().connect(&target, interface, ctx)?;
+    let client = caller.transport.connect(&target, interface, ctx)?;
 
     Ok(Call {
         start,
@@ -269,19 +232,17 @@ fn encode_params<T: WrpcView + 'static>(
     Ok(buf)
 }
 
-fn timeout_error(
-    handle: &DispatchHandle, target: &GuestId, interface: &str, func: &str,
-) -> anyhow::Error {
+fn timeout_error(caller: &Caller, target: &GuestId, interface: &str, func: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "link dispatch to `{target}` for `{interface}/{func}` timed out after {:?}",
-        handle.policy.timeout
+        caller.policy.timeout
     )
 }
 
 /// Await the dispatch round-trip, bounded by `guest_timeout` unless the call's
 /// chain root runs uncapped (a command-mode `wasi:cli/run` drive).
 async fn bounded<F>(
-    handle: &DispatchHandle, call: &Call<'_>, interface: &str, func: &str, fut: F,
+    caller: &Caller, call: &Call<'_>, interface: &str, func: &str, fut: F,
 ) -> Result<()>
 where
     F: Future<Output = Result<()>>,
@@ -289,9 +250,9 @@ where
     if call.uncapped {
         return fut.await;
     }
-    tokio::time::timeout(handle.policy.timeout, fut)
+    tokio::time::timeout(caller.policy.timeout, fut)
         .await
-        .map_err(|_elapsed| timeout_error(handle, &call.target, interface, func))?
+        .map_err(|_elapsed| timeout_error(caller, &call.target, interface, func))?
 }
 
 fn log_dispatch(call: &Call<'_>, interface: &str, func: &str) {
@@ -311,13 +272,13 @@ fn log_dispatch(call: &Call<'_>, interface: &str, func: &str) {
 /// depth, then round-trip the call over the in-process wRPC carrier to a
 /// freshly-instantiated target export.
 async fn send<T>(
-    mut store: StoreContextMut<'_, T>, handle: &DispatchHandle, interface: &str, func: &str,
+    mut store: StoreContextMut<'_, T>, caller: &Caller, interface: &str, func: &str,
     ty: &types::ComponentFunc, params: &[Val], results: &mut [Val],
 ) -> Result<()>
 where
     T: WrpcView + 'static,
 {
-    let call = prepare(handle, interface, func, ty, params)?;
+    let call = prepare(caller, interface, func, ty, params)?;
     let buf = encode_params(store.as_context_mut(), &call, interface, func)?;
 
     // Invoke over the carrier; the request is written and flushed here, the
@@ -341,7 +302,7 @@ where
         }
         anyhow::Ok(())
     };
-    bounded(handle, &call, interface, func, round_trip).await?;
+    bounded(caller, &call, interface, func, round_trip).await?;
 
     log_dispatch(&call, interface, func);
     Ok(())
@@ -355,13 +316,13 @@ where
 /// decoded store-free — sound because resources, the only values
 /// `wrpc_wasmtime::read_value` needs the store for, never cross the link seam.
 async fn send_concurrent<T>(
-    accessor: &Accessor<T>, handle: &DispatchHandle, interface: &str, func: &str,
+    accessor: &Accessor<T>, caller: &Caller, interface: &str, func: &str,
     ty: &types::ComponentFunc, params: &[Val], results: &mut [Val],
 ) -> Result<()>
 where
     T: WrpcView + 'static,
 {
-    let call = prepare(handle, interface, func, ty, params)?;
+    let call = prepare(caller, interface, func, ty, params)?;
     let buf = accessor
         .with(|mut access| encode_params(access.as_context_mut(), &call, interface, func))?;
 
@@ -381,7 +342,7 @@ where
         }
         anyhow::Ok(())
     };
-    bounded(handle, &call, interface, func, round_trip).await?;
+    bounded(caller, &call, interface, func, round_trip).await?;
 
     log_dispatch(&call, interface, func);
     Ok(())

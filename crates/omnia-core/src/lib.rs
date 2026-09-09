@@ -8,11 +8,13 @@ mod digest;
 mod dispatch;
 mod extensions;
 mod host;
+mod link;
 mod location;
 mod mount;
 mod options;
 mod registry;
 mod runtime;
+mod seam;
 mod store;
 pub mod telemetry;
 mod value;
@@ -25,23 +27,23 @@ pub use wrpc_wasmtime::{WrpcCtxView, WrpcView};
 pub use {anyhow, futures, tokio, wasmtime, wasmtime_wasi};
 
 pub use self::artifact::{ELF_MAGIC, GuestArtifact, LoadedGuest, is_precompiled};
-pub use self::chain::as_command_chain;
+pub use self::chain::{ChainPolicy, as_command_chain};
 pub use self::digest::sha256_digest;
-pub use self::dispatch::{
-    DispatchHandle, Dispatcher, FirstArgSelector, GuestSelector, LinkClient, WrpcState, serve_links,
-};
+pub use self::dispatch::Dispatcher;
 pub use self::extensions::Extensions;
 pub use self::host::{
     Backend, FromEnv, FutureResult, HasTable, Host, HostCtx, NoOptions, Provides, Proxy, Server,
     get_cloned,
 };
+pub use self::link::{FirstArgSelector, GuestSelector, InProcessLinks, LinkClient, WrpcState};
 pub use self::location::Location;
 pub use self::mount::{MountRegistry, ResolvedPreopen};
 pub use self::options::RuntimeOptions;
 pub use self::registry::{
     CliRoutes, Guest, GuestId, HttpRoutes, PatternRoutes, Registry, Resolver, Routes, TriggerRouter,
 };
-pub use self::runtime::{AdmitError, ExitStatus, Runtime, RuntimeParts, WeakRuntime};
+pub use self::runtime::{AdmitError, ExitStatus, Runtime, RuntimeParts, WeakRuntime, serve_links};
+pub use self::seam::{LinkSeam, NoLinks, StoreFactory};
 pub use self::store::{
     HasDispatcher, HasExtensions, HasLimits, HasMounts, HttpBorrow, HttpCtx, StoreBase,
     StoreConfig, StoreCtx, StoreView,

@@ -34,8 +34,8 @@ pub struct StoreConfig<'a> {
     /// [`RuntimeOptions::max_memory_bytes`].
     pub options: &'a RuntimeOptions,
     /// Type-erased host->guest dispatcher: a fresh handle to the owning
-    /// [`Runtime`](crate::Runtime) so any host->guest call (such as
-    /// `wasi-model`'s `resolve`) lands a new instance.
+    /// [`Runtime`](crate::Runtime) so any host->guest call lands a new
+    /// instance.
     pub dispatcher: Arc<dyn Dispatcher>,
     /// Guest argv (`args[0]` is the program name); `None` for reactor
     /// deployments that do not model a CLI invocation.
@@ -68,9 +68,8 @@ pub struct StoreBase {
     /// Per-store wRPC view state for host-mediated dynamic linking; inert
     /// unless the deployment declares link interfaces (the manifest `plugins` list).
     pub wrpc: WrpcState,
-    /// Type-erased host->guest dispatcher (e.g. `wasi-model`'s `resolve`); a
-    /// fresh handle to the owning runtime. Inert unless a host binding reaches
-    /// for it.
+    /// Type-erased host->guest dispatcher; a fresh handle to the owning
+    /// runtime. Inert unless a host binding reaches for it.
     pub dispatcher: Arc<dyn Dispatcher>,
     /// Mount registry: the startup-validated mounts also preopened into
     /// [`wasi`](Self::wasi). A consuming host crate reads it to match a lent

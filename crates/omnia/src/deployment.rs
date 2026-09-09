@@ -16,9 +16,9 @@ use omnia_core::wasmtime::component::Linker;
 use omnia_core::wasmtime::{Config, Engine};
 use omnia_core::wasmtime_wasi::WasiView;
 use omnia_core::{
-    DispatchHandle, FirstArgSelector, GuestId, GuestSelector, Host, LoadedGuest, Location, LogMode,
-    MountRegistry, Registry, Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreCtx,
-    Telemetry, WrpcView, serve_links,
+    ChainPolicy, FirstArgSelector, GuestId, GuestSelector, Host, InProcessLinks, LinkSeam,
+    LoadedGuest, Location, LogMode, MountRegistry, NoLinks, Registry, Routes, Runtime,
+    RuntimeOptions, RuntimeParts, Server, StoreCtx, Telemetry, WrpcView,
 };
 use source::ArtifactPolicy;
 
@@ -339,14 +339,18 @@ impl<T: WasiView> Deployment<T> {
     /// component cannot be pre-instantiated, or the registry cannot be assembled.
     pub fn into_registry(self) -> Result<Registry<T>>
     where
+        // `InProcessLinks` serves over wRPC, which needs the store's wRPC view.
         T: WrpcView,
     {
-        let dispatch = DispatchHandle::new(
-            self.selector,
-            self.links,
-            self.options.max_dispatch_depth,
-            self.options.guest_timeout,
-        );
+        let seam: Arc<dyn LinkSeam<T>> = if self.links.is_empty() {
+            Arc::new(NoLinks)
+        } else {
+            Arc::new(InProcessLinks::new(
+                self.selector,
+                self.links,
+                ChainPolicy::from(&self.options),
+            ))
+        };
 
         Registry::assemble(
             self.engine,
@@ -354,7 +358,7 @@ impl<T: WasiView> Deployment<T> {
             self.options,
             self.guests,
             self.routes,
-            dispatch,
+            seam,
             self.allow_empty,
         )
     }
@@ -377,7 +381,7 @@ impl<B: Clone + Send + Sync + 'static> Deployment<StoreCtx<B>> {
             backends,
             registry: Arc::new(self.into_registry().context("assembling registry")?),
         });
-        serve_links(&runtime).await.context("wiring host-mediated link serve side")?;
+        runtime.serve_links().await.context("wiring host-mediated link serve side")?;
         Ok(runtime)
     }
 }

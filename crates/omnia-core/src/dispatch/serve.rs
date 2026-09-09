@@ -6,12 +6,14 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use futures::StreamExt as _;
+use wasmtime::Store;
 use wasmtime::component::types;
 use wrpc_wasmtime::ServeExt as _;
 
-use super::transport::{Endpoint, InProcServer};
+use super::handle::DispatchHandle;
+use super::transport::Endpoint;
 use crate::chain::with_chain;
-use crate::registry::{Guest, GuestId};
+use crate::registry::Guest;
 use crate::runtime::Runtime;
 use crate::store::StoreCtx;
 
@@ -21,17 +23,20 @@ type HostResources = HashMap<
     HashMap<Box<str>, (wasmtime::component::ResourceType, wasmtime::component::ResourceType)>,
 >;
 
+/// Builds a fresh, fully configured guest store per served invocation.
+pub type StoreFactory<T> = Arc<dyn Fn() -> Store<T> + Send + Sync>;
+
 /// Wire the serve side of every host-mediated interface.
 ///
 /// Each target guest that exports a linked interface runs a wRPC server whose
-/// handlers instantiate the guest *fresh per call* (instance-per-call); each
-/// server is then added to the bound transport carrier so polyfilled imports
-/// can reach it. `Deployment::assemble` calls this during bootstrap; only a
+/// handlers instantiate the guest *fresh per call* (instance-per-call). Every
+/// registered guest is served (parked pending on the transport), then all of
+/// them are published under one lifecycle transition so polyfilled imports can
+/// reach them. `Deployment::assemble` calls this during bootstrap; only a
 /// runtime assembled through [`Runtime::from_parts`](crate::Runtime::from_parts)
 /// wires it explicitly.
 ///
 /// Spawns one detached task per served function to drain its invocation stream.
-/// A no-op when the deployment declares no link interfaces.
 ///
 /// # Errors
 ///
@@ -43,50 +48,59 @@ where
 {
     let registry = state.registry();
     let handle = registry.dispatch();
-    if handle.links().is_empty() {
-        return Ok(());
-    }
+    let transport = handle.transport();
+    let factory = state.store_factory();
+    let guests: Vec<_> = registry.guests().collect();
 
-    let mut endpoints: HashMap<GuestId, Endpoint> = HashMap::new();
-    for guest in registry.guests() {
-        if let Some(endpoint) = serve_guest(state, &guest).await? {
-            endpoints.insert(guest.id().clone(), endpoint);
+    // On any failure, release what is still parked so a failed bootstrap pins
+    // nothing.
+    let discard_from = |first_unpublished: usize| {
+        for guest in &guests[first_unpublished..] {
+            transport.discard(guest.id());
+        }
+    };
+
+    for guest in &guests {
+        if let Err(error) = serve_guest(Arc::clone(&factory), guest, handle).await {
+            discard_from(0);
+            return Err(error);
         }
     }
 
-    // Publish every bootstrap endpoint as one lifecycle transition.
-    let transport = handle.transport();
     let _lifecycle = registry.lifecycle_write();
-    for (id, endpoint) in endpoints {
-        transport.insert(&id, endpoint)?;
+    for (published, guest) in guests.iter().enumerate() {
+        if let Err(error) = transport.publish(guest.id()) {
+            discard_from(published + 1);
+            return Err(error);
+        }
     }
     Ok(())
 }
 
-/// Wire the serve side of one guest's host-mediated exports, returning its
-/// endpoint (wRPC server plus drain tasks) — `None` when the guest exports no
-/// linked interface.
+/// Wire the serve side of one guest's host-mediated exports and park the
+/// result as pending on the transport — with no endpoint when the guest
+/// exports no linked interface, so a later call to it is diagnosed as
+/// "registered but unlinked" rather than "not registered".
 ///
 /// Shared by the bootstrap walk above and by dynamic registration
-/// (serve-at-register), which hands the returned endpoint to the registry's
-/// transactional publish so endpoint and registry entry appear as one step.
+/// (serve-at-register); the registry's transactional publish then moves the
+/// pending endpoint live together with the registry entry.
 ///
 /// # Errors
 ///
-/// Returns an error if a guest's export cannot be served over the carrier.
+/// Returns an error if a guest's export cannot be served over the carrier, or
+/// the guest already has a pending endpoint.
 pub async fn serve_guest<B>(
-    state: &Runtime<B>, guest: &Guest<StoreCtx<B>>,
-) -> Result<Option<Endpoint>>
+    factory: StoreFactory<StoreCtx<B>>, guest: &Guest<StoreCtx<B>>, handle: &DispatchHandle,
+) -> Result<()>
 where
     B: Clone + Send + Sync + 'static,
 {
-    let registry = state.registry();
-    let handle = registry.dispatch();
-    let engine = registry.engine().clone();
-
+    let engine = guest.instance_pre().engine().clone();
     let component_ty = guest.component().component_type();
-    let mut server: Option<Arc<InProcServer>> = None;
-    let mut drains = Vec::new();
+    // Built incrementally so an error part-way drops it and aborts the drains
+    // already spawned.
+    let mut endpoint: Option<Endpoint> = None;
 
     for (interface, types::ComponentExtern { ty, .. }) in component_ty.exports(&engine) {
         if !handle.links().contains(interface) {
@@ -99,13 +113,12 @@ where
             let types::ComponentItem::ComponentFunc(func_ty) = ty else {
                 continue;
             };
-            let server =
-                Arc::clone(server.get_or_insert_with(|| Arc::new(InProcServer::default())));
-            let runtime = state.clone();
-            let factory = move || runtime.build_store(runtime.store());
-            let stream = server
+            let endpoint = endpoint.get_or_insert_with(Endpoint::new);
+            let factory = Arc::clone(&factory);
+            let stream = endpoint
+                .server
                 .serve_function(
-                    factory,
+                    move || factory(),
                     guest.instance_pre().clone(),
                     Arc::<HostResources>::default(),
                     func_ty,
@@ -117,7 +130,7 @@ where
                     format!("serving `{interface}/{func}` from guest `{}`", guest.id())
                 })?;
 
-            drains.push(tokio::spawn(async move {
+            endpoint.drains.push(tokio::spawn(async move {
                 let mut stream = pin!(stream);
                 while let Some(invocation) = stream.next().await {
                     match invocation {
@@ -139,5 +152,5 @@ where
         }
     }
 
-    Ok(server.map(|server| Endpoint::new(server, drains)))
+    handle.transport().park(guest.id(), endpoint)
 }

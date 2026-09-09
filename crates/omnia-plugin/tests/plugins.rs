@@ -219,7 +219,10 @@ async fn plugins_load_unlinked() {
         "the load succeeded before the call failed: {error:#}"
     );
     let detail = format!("{error:#}");
-    assert!(detail.contains("test:unlinked"), "the trap names the unlinked target: {detail}");
+    assert!(
+        detail.contains("guest `test:unlinked` is registered but exports no linked interface"),
+        "the trap diagnoses the unlinked target: {detail}"
+    );
     runtime.shutdown();
 }
 

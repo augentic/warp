@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::{Arc, PoisonError, RwLock};
 
-use anyhow::{Context as _, Result, ensure};
+use anyhow::{Result, bail};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf, split};
 use wasmtime::component::ResourceTable;
 use wrpc_transport::frame::{Oneshot, Server};
@@ -58,31 +58,35 @@ pub trait LinkTransport: Send + Sync + 'static {
     /// The wRPC client handle this transport hands the dispatch path.
     type Client: wrpc_transport::Invoke<Context = ()>;
 
-    /// Open a fresh client connection to `target` for a single invocation
-    /// running at `ctx` in its dispatch chain; the transport carries the
-    /// context to the serve side so nested calls stay bounded and inherit the
-    /// chain's wall-clock policy.
+    /// Open a fresh client connection to `target` for a single invocation of
+    /// `interface` running at `ctx` in its dispatch chain; the transport
+    /// carries the context to the serve side so nested calls stay bounded and
+    /// inherit the chain's wall-clock policy.
     ///
     /// # Errors
     ///
-    /// Returns an error if `target` has no bound endpoint on this transport.
-    fn connect(&self, target: &GuestId, ctx: ChainCtx) -> Result<Self::Client>;
+    /// Returns an error if `target` is not published on this transport, or is
+    /// published but exports no linked interface.
+    fn connect(&self, target: &GuestId, interface: &str, ctx: ChainCtx) -> Result<Self::Client>;
 }
 
 /// A guest's serve side: its wRPC server plus the detached tasks draining each
 /// served function's invocation stream. Dropping the endpoint aborts the
 /// drains, so removing a guest (or finishing the deployment) releases the
 /// `Runtime` clones — and with them the engine — that the tasks pin.
-pub struct Endpoint {
-    server: Arc<InProcServer>,
-    drains: Vec<tokio::task::JoinHandle<()>>,
+pub(super) struct Endpoint {
+    pub(super) server: Arc<InProcServer>,
+    pub(super) drains: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl Endpoint {
-    /// Bundle a guest's wRPC server with its drain tasks.
-    #[must_use]
-    pub const fn new(server: Arc<InProcServer>, drains: Vec<tokio::task::JoinHandle<()>>) -> Self {
-        Self { server, drains }
+    /// A fresh server with no drains yet; the serve side pushes one per
+    /// served function.
+    pub(super) fn new() -> Self {
+        Self {
+            server: Arc::new(InProcServer::default()),
+            drains: Vec::new(),
+        }
     }
 }
 
@@ -97,61 +101,87 @@ impl Drop for Endpoint {
 /// The co-located fast transport: every target's exports are served over a wRPC
 /// [`Server`] reachable through an in-memory byte pipe.
 ///
-/// The server map is `Arc`-shared behind interior mutability so a guest
-/// registered after bootstrap gains an endpoint on every clone of the carrier
-/// (serve-at-register). Mutations run with the registry's lifecycle write
-/// guard already held by the caller (the transactional publish/remove), so the
-/// registry map and this map change as one step; lookups take only the map's
-/// own lock.
+/// Endpoints move through two stages. Serving a guest *parks* its endpoint —
+/// `None` when it exports no linked interface — as pending, outside the
+/// registry's lifecycle gate; publishing moves it to the live map under that
+/// gate, together with the registry entry, so the two change as one step.
+/// [`connect`](LinkTransport::connect) reads only the live map, under the
+/// map's own lock: a call racing a deregister may complete against the
+/// departing instance, exactly as an in-flight invocation does.
+///
+/// Both maps are `Arc`-shared so a guest registered after bootstrap is
+/// reachable from every clone of the carrier (serve-at-register).
 #[derive(Clone, Default)]
 pub struct InProcess {
-    servers: Arc<RwLock<HashMap<GuestId, Endpoint>>>,
+    endpoints: Arc<RwLock<Endpoints>>,
+}
+
+/// Recording every served guest — linked or not — lets `connect` tell "not
+/// registered" from "registered but exports nothing linked".
+#[derive(Default)]
+struct Endpoints {
+    pending: HashMap<GuestId, Option<Endpoint>>,
+    live: HashMap<GuestId, Option<Endpoint>>,
 }
 
 impl InProcess {
-    /// Returns the wRPC server serving `target`'s host-mediated exports, if any.
-    #[must_use]
-    pub fn server(&self, target: &GuestId) -> Option<Arc<InProcServer>> {
-        self.servers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(target)
-            .map(|endpoint| Arc::clone(&endpoint.server))
-    }
-
-    /// Add the endpoint serving `target`'s host-mediated exports, refusing an
-    /// occupied slot so a registration can never clobber an existing guest's
-    /// endpoint.
+    /// Park `target`'s served endpoint as pending until it is published or
+    /// discarded, refusing an identity that is already pending.
     ///
-    /// The caller must hold the registry's lifecycle write guard; this method
-    /// takes only the inner map lock.
-    pub(crate) fn insert(&self, target: &GuestId, endpoint: Endpoint) -> Result<()> {
-        let inserted = {
-            let mut servers = self.servers.write().unwrap_or_else(PoisonError::into_inner);
-            match servers.entry(target.clone()) {
-                Entry::Occupied(_) => false,
-                Entry::Vacant(slot) => {
-                    slot.insert(endpoint);
-                    true
-                }
+    /// Runs outside the registry's lifecycle gate; takes only the map lock.
+    pub(super) fn park(&self, target: &GuestId, endpoint: Option<Endpoint>) -> Result<()> {
+        let mut endpoints = self.endpoints.write().unwrap_or_else(PoisonError::into_inner);
+        match endpoints.pending.entry(target.clone()) {
+            Entry::Occupied(_) => bail!("guest `{target}` already has a pending endpoint"),
+            Entry::Vacant(slot) => {
+                slot.insert(endpoint);
+                Ok(())
             }
-        };
-        ensure!(inserted, "guest `{target}` already has an in-process endpoint");
-        Ok(())
+        }
     }
 
-    /// Remove `target`'s endpoint, aborting its drain tasks; in-flight
+    /// Move `target`'s pending endpoint live, refusing an occupied live slot
+    /// so a registration can never clobber an existing guest's endpoint; a
+    /// no-op when nothing is pending. A refused pending endpoint is dropped.
+    ///
+    /// The caller must hold the registry's lifecycle write guard.
+    pub(crate) fn publish(&self, target: &GuestId) -> Result<()> {
+        let mut endpoints = self.endpoints.write().unwrap_or_else(PoisonError::into_inner);
+        let Some(endpoint) = endpoints.pending.remove(target) else {
+            return Ok(());
+        };
+        match endpoints.live.entry(target.clone()) {
+            Entry::Occupied(_) => bail!("guest `{target}` already has a live endpoint"),
+            Entry::Vacant(slot) => {
+                slot.insert(endpoint);
+                Ok(())
+            }
+        }
+    }
+
+    /// Drop `target`'s pending endpoint (a publication that was refused),
+    /// aborting its drain tasks.
+    ///
+    /// The caller must hold the registry's lifecycle write guard.
+    pub(crate) fn discard(&self, target: &GuestId) {
+        self.endpoints.write().unwrap_or_else(PoisonError::into_inner).pending.remove(target);
+    }
+
+    /// Drop `target`'s live endpoint, aborting its drain tasks; in-flight
     /// invocations hold their own server [`Arc`] and complete.
     ///
     /// The caller must hold the registry's lifecycle write guard.
     pub(crate) fn remove(&self, target: &GuestId) {
-        self.servers.write().unwrap_or_else(PoisonError::into_inner).remove(target);
+        self.endpoints.write().unwrap_or_else(PoisonError::into_inner).live.remove(target);
     }
 
-    /// Drop every endpoint, aborting all drain tasks, so a finished deployment
-    /// releases the `Runtime` clones (and the engine) they pin.
+    /// Drop every pending and live endpoint, aborting all drain tasks, so a
+    /// finished deployment releases the `Runtime` clones (and the engine) they
+    /// pin.
     pub(crate) fn clear(&self) {
-        self.servers.write().unwrap_or_else(PoisonError::into_inner).clear();
+        let mut endpoints = self.endpoints.write().unwrap_or_else(PoisonError::into_inner);
+        endpoints.pending.clear();
+        endpoints.live.clear();
     }
 }
 
@@ -208,13 +238,18 @@ impl WrpcCtx<InProcClient> for WrpcState {
 impl LinkTransport for InProcess {
     type Client = InProcClient;
 
-    fn connect(&self, target: &GuestId, ctx: ChainCtx) -> Result<Self::Client> {
-        let server = self.server(target).with_context(|| {
-            format!(
-                "no in-process endpoint serves guest `{target}` (is it registered and does it \
-                     export the linked interface?)"
-            )
-        })?;
+    fn connect(&self, target: &GuestId, interface: &str, ctx: ChainCtx) -> Result<Self::Client> {
+        let server = {
+            let endpoints = self.endpoints.read().unwrap_or_else(PoisonError::into_inner);
+            match endpoints.live.get(target) {
+                None => bail!("guest `{target}` is not registered"),
+                Some(None) => bail!(
+                    "guest `{target}` is registered but exports no linked interface \
+                     (`{interface}`); is it meant to be a link target?"
+                ),
+                Some(Some(endpoint)) => Arc::clone(&endpoint.server),
+            }
+        };
 
         // A fresh pipe per call: the client half drives this invocation; the
         // server half is accepted onto the target's wRPC server, which

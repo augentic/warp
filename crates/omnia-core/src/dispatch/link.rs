@@ -237,7 +237,7 @@ fn prepare<'a>(
         param_types.len()
     );
 
-    let client = handle.transport().connect(&target, ctx)?;
+    let client = handle.transport().connect(&target, interface, ctx)?;
 
     Ok(Call {
         start,

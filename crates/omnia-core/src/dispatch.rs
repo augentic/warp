@@ -31,9 +31,9 @@ mod value;
 
 pub use handle::DispatchHandle;
 pub use host::Dispatcher;
-// `polyfill_late`, `serve_guest`, and `Endpoint` are crate-internal: this
-// module is private, and `lib.rs` does not re-export them.
+// `polyfill_late` and `serve_guest` are crate-internal: this module is
+// private, and `lib.rs` does not re-export them.
 pub use link::{WiredLinks, link, polyfill_late};
 pub use selector::{FirstArgSelector, GuestSelector};
 pub use serve::{serve_guest, serve_links};
-pub use transport::{Endpoint, LinkClient, WrpcState};
+pub use transport::{LinkClient, WrpcState};

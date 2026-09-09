@@ -330,6 +330,15 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
         store
     }
 
+    /// A shareable factory for fresh, fully configured guest stores — what the
+    /// link serve side hands to each served function to instantiate the
+    /// target per call.
+    #[must_use]
+    pub fn store_factory(&self) -> Arc<dyn Fn() -> Store<StoreCtx<B>> + Send + Sync> {
+        let runtime = self.clone();
+        Arc::new(move || runtime.build_store(runtime.store()))
+    }
+
     /// Instantiate a guest component into `store`.
     ///
     /// # Errors
@@ -392,14 +401,13 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
         let instance_pre = registry.instantiate_late(&id, &component)?;
         let guest = Guest::local(id.clone(), instance_pre);
 
-        // Wire the guest's linked exports (if any); publish then makes the
-        // endpoint and the registry entry observable in one atomic step. If
-        // publish refuses (a racing registration won), dropping the unused
-        // endpoint aborts its drain tasks.
-        let endpoint = serve_guest(self, &guest)
+        // Serve the guest's linked exports (if any) as a pending endpoint;
+        // publish then makes the endpoint and the registry entry observable in
+        // one atomic step, discarding the endpoint if a racing registration won.
+        serve_guest(self.store_factory(), &guest, registry.dispatch())
             .await
             .with_context(|| format!("serving guest `{id}` link exports"))?;
-        registry.publish(guest, endpoint).map_err(PublishError::into_anyhow)?;
+        registry.publish(guest).map_err(PublishError::into_anyhow)?;
 
         tracing::debug!(guest = %id, "guest registered");
         Ok(())
@@ -438,10 +446,10 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
             AdmitError::ArtifactRefused(format!("pre-instantiating `{id}`: {error:#}"))
         })?;
         let guest = Guest::local(id.clone(), instance_pre).with_digest(digest);
-        let endpoint = serve_guest(self, &guest).await.map_err(|error| {
-            AdmitError::Internal(format!("serving `{id}` seam exports: {error:#}"))
-        })?;
-        self.registry().publish(guest, endpoint).map_err(|error| match error {
+        serve_guest(self.store_factory(), &guest, self.registry().dispatch()).await.map_err(
+            |error| AdmitError::Internal(format!("serving `{id}` seam exports: {error:#}")),
+        )?;
+        self.registry().publish(guest).map_err(|error| match error {
             PublishError::Occupied(id) => {
                 AdmitError::AlreadyRegistered(format!("guest `{id}` is already registered"))
             }

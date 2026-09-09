@@ -24,7 +24,7 @@ use wrpc_wasmtime::WrpcView;
 
 use crate::RuntimeOptions;
 use crate::artifact::LoadedGuest;
-use crate::dispatch::{self, DispatchHandle, Endpoint};
+use crate::dispatch::{self, DispatchHandle};
 
 /// Opaque guest identity.
 ///
@@ -299,14 +299,13 @@ impl<T: 'static> Registry<T> {
         snapshot.into_iter()
     }
 
-    /// Publish a late guest and its link endpoint as one lifecycle
-    /// transition. Refuses an identity that is already registered (static
-    /// entries can never be shadowed; a dynamic upgrade is
-    /// deregister + register); on refusal neither map is touched, so a failed
-    /// registration leaves no partial state.
-    pub(crate) fn publish(
-        &self, guest: Guest<T>, endpoint: Option<Endpoint>,
-    ) -> Result<(), PublishError> {
+    /// Publish a late guest and its pending link endpoint (parked by the serve
+    /// side) as one lifecycle transition. Refuses an identity that is already
+    /// registered (static entries can never be shadowed; a dynamic upgrade is
+    /// deregister + register), discarding the pending endpoint; on refusal the
+    /// registry map is untouched, so a failed registration leaves no partial
+    /// state.
+    pub(crate) fn publish(&self, guest: Guest<T>) -> Result<(), PublishError> {
         let id = guest.id().clone();
         let transport = self.dispatch.transport();
 
@@ -314,13 +313,14 @@ impl<T: 'static> Registry<T> {
         let _lifecycle = self.lifecycle_write();
         let mut guests = self.guests.write().unwrap_or_else(PoisonError::into_inner);
         match guests.entry(id.clone()) {
-            btree_map::Entry::Occupied(_) => return Err(PublishError::Occupied(id)),
+            btree_map::Entry::Occupied(_) => {
+                transport.discard(&id);
+                return Err(PublishError::Occupied(id));
+            }
             btree_map::Entry::Vacant(slot) => {
-                // Endpoint before entry: `insert` refuses an occupied slot, and
-                // failing here leaves the registry map untouched.
-                if let Some(endpoint) = endpoint {
-                    transport.insert(&id, endpoint).map_err(PublishError::Transport)?;
-                }
+                // Transport before entry: `publish` refuses an occupied live
+                // slot, and failing here leaves the registry map untouched.
+                transport.publish(&id).map_err(PublishError::Transport)?;
                 slot.insert(Arc::new(guest));
             }
         }

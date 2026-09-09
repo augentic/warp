@@ -27,7 +27,7 @@ cli = ["dep:omnia-cli"]
 # Enables the `omnia:plugins/loader` capability: the `WasiPlugins` host, the
 # `Plugins` load path, and the built-in acquirers (`PathMounts`,
 # `RegistryClient`) with their HTTP/OCI registry stack. A `runtime!`
-# invocation declaring `plugins: { locations: [...] }` requires it; without it,
+# invocation declaring `plugin: { locations: [...] }` requires it; without it,
 # deployments are interfaces-only and never link the loader.
 plugin = ["dep:omnia-plugin"]
 

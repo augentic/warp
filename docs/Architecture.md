@@ -63,6 +63,7 @@ This separation allows the same guest to run with different backends — swap th
 │  Layer 1: Composition root + live-runtime SDK                   │
 │  omnia — assembly, lifecycle, optional-crate composition        │
 │  omnia-core — wasmtime engine, registry, dispatch, traits       │
+│  omnia-link — guest→guest linking (omnia `link` feature)        │
 │  capability crates (omnia-plugin, …) target omnia-core          │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -73,19 +74,20 @@ Layers 1 and 2 form the **runtime core** — domain-agnostic infrastructure that
 
 ### Composition root (`omnia`) and live-runtime SDK (`omnia-core`)
 
-`omnia` is the composition root: it owns deployment assembly, process lifecycle, and composition of the optional crates. Embedders depend on it alone (`omnia::…` paths). A deployment's `Cargo.toml` never names `omnia-core`, `omnia-plugin`, or `omnia-cli`, and neither does any path the `runtime!` macro emits (it imports even its `Result` as `omnia::anyhow::Result`). Re-exports are `#[doc(inline)]` so the rendered documentation shows `omnia::…` paths too.
+`omnia` is the composition root: it owns deployment assembly, process lifecycle, and composition of the optional crates. Embedders depend on it alone (`omnia::…` paths). A deployment's `Cargo.toml` never names `omnia-core`, `omnia-link`, `omnia-plugin`, or `omnia-cli`, and neither does any path the `runtime!` macro emits (it imports even its `Result` as `omnia::anyhow::Result`). Re-exports are `#[doc(inline)]` so the rendered documentation shows `omnia::…` paths too.
 
 `omnia` provides:
 
 - **Deployment pipeline**: `DeploymentBuilder` builds a `Deployment` from a `Manifest` (loaded from `omnia.toml`, synthesized from a single `.wasm`, or constructed programmatically)
 - **Lifecycle**: `Wiring`, `Backends`, `Mode`; `run` / `run_with` take a built `Deployment`, call `Deployment::assemble`, then drive command mode or the trigger servers
-- **Optional-crate composition**: `omnia-plugin` (the `omnia:plugins/loader` capability, behind the `plugin` feature — a `runtime!` invocation declaring `plugins: { locations: [...] }` requires it), `omnia-cli` (the `run` grammar, behind the `cli` feature), and the `runtime!` macro
+- **Optional-crate composition**: `omnia-link` (guest→guest linking, behind the `link` feature — a `runtime!` invocation declaring `link: { interfaces: [...] }` requires it), `omnia-plugin` (the `omnia:plugins/loader` capability, behind the `plugin` feature — a `runtime!` invocation declaring `plugin: { locations: [...] }` requires it), `omnia-cli` (the `run` grammar, behind the `cli` feature), and the `runtime!` macro. The two features are independent: static guests may link; loaded guests may be host-only.
 
 `omnia-core` is the live-runtime SDK a capability crate targets. Depend on it directly only when building another capability crate. It provides:
 
 - **Runtime handle**: `Runtime<B>` over `StoreCtx<B>`, assembled from `RuntimeParts`; `Registry` holds pre-instantiated guests
 - **Core traits**: `Host`, `Server`, `Backend`
-- **Host-mediated dispatch**: guest-to-guest linking over an in-process wRPC carrier
+- **Link seam**: the `LinkSeam` trait and `NoLinks` no-op the registry drives; guest→guest linking itself lives in `omnia-link` (`InProcessLinks`)
+- **Host→guest dispatch**: `Dispatcher`, a direct call with no carrier
 - **Telemetry**: `tracing` + OpenTelemetry bootstrap
 - **Admission seam**: `Runtime::admit` and `Extensions`, which `omnia-plugin` uses to install acquisition policy from the `Wiring::extend` hook
 
@@ -170,13 +172,15 @@ A deployment can hold many guests. All of them share one wasmtime `Engine` and o
 
 - **Route tables** — per-trigger routing (each guest's `routes.http` by longest prefix, `routes.messaging`/`routes.websocket` by NATS-style pattern) selects which guest handles an inbound request.
 - **Mounts** — `[[mount]]` entries preopen host directories into every guest sandbox (read-only unless marked writable).
-- **Plugins** — the deployment-wide `plugins` list names interfaces the host polyfills onto the shared linker; calls dispatch to whichever guest exports the interface, over an in-process carrier, with nesting bounded by `MAX_DISPATCH_DEPTH`.
+- **Link seam** — the deployment-wide `[link] interfaces` list names interfaces the host polyfills onto the shared linker; calls dispatch to whichever guest exports the interface, over an in-process carrier, with nesting bounded by `MAX_DISPATCH_DEPTH`. The registry always holds a `LinkSeam`: `NoLinks` when the list is empty (every method a no-op), `InProcessLinks` (in `omnia-link`, reached only through omnia's `link` feature) otherwise.
+
+Endpoints move through two stages inside the seam. `serve` runs *outside* the registry's lifecycle gate and writes only pending state; `publish`, `discard`, and `remove` run *under* the gate's write guard, so a guest's registry entry and its live endpoint change as one step. A call path never reads pending state and reads live state under the seam's own lock, not the gate: a call racing a deregister may complete against the departing instance, exactly as an in-flight invocation does.
 
 All of this is declared in the `omnia.toml` manifest ([reference](reference/configuration.md#deployment-manifest-omniatoml)) or assembled programmatically with the `omnia::Manifest` fluent API; a bare `.wasm` path on the command line remains the zero-config single-guest case.
 
 ## Runtime Execution Flow
 
-1. **CLI parsing** — the generated `main` delegates to `omnia::main`, which parses the `run` subcommand (`omnia-cli` decides the source over `--config` / `OMNIA_CONFIG` / positional `<wasm>` / compiled-in), materializes a `Manifest`, and appends CLI `--mount`/`--plugins` entries onto it.
+1. **CLI parsing** — the generated `main` delegates to `omnia::main`, which parses the `run` subcommand (`omnia-cli` decides the source over `--config` / `OMNIA_CONFIG` / positional `<wasm>` / compiled-in), materializes a `Manifest`, and appends CLI `--mount`/`--link` entries onto it.
 2. **Build** — `DeploymentBuilder` validates the manifest, resolves mounts, loads guests, and returns a `Deployment` ready for host linking (`build` is the safe wasm path; `unsafe build_trusted` is the pre-compiled path).
 3. **Assemble** — `run` connects backends, `Wiring::link` adds each host to the linker, `Deployment::assemble` builds the `Runtime` from `RuntimeParts` and wires host-mediated link servers, then `Wiring::extend` installs capability extensions (such as the plugin acquisition policy).
 4. **Bootstrap** — starts epoch interruption and pool-metric sampling, then logs **`omnia ready`**.
@@ -214,6 +218,7 @@ omnia/
 ├── crates/
 │   ├── omnia/              # Composition root (assembly, lifecycle, optional crates, runtime!)
 │   ├── omnia-core/         # Live-runtime SDK (engine, registry, dispatch, stores, telemetry)
+│   ├── omnia-link/         # Guest→guest linking (InProcessLinks; re-exported by omnia behind `link`)
 │   ├── omnia-guest/        # Guest SDK (Handler/Client/Context, HTTP/messaging/command adapters, errors, ORM, MCP)
 │   ├── guest-macros/       # #[instrument] proc macro
 │   ├── host-macros/        # runtime! proc-macro

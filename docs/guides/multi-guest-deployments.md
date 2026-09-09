@@ -12,7 +12,7 @@ Point the runtime at a manifest with `--config` (or the `OMNIA_CONFIG` environme
 cargo run --example http-routing -- run --config examples/http-routing/omnia.toml
 ```
 
-A runtime can also compile in a default deployment with the `runtime!` macro — a manifest path via the `config:` field, or the manifest itself via the inline `plugins`/`guests`/`mounts` keys (each guest entry carries its own `routes`) — used only when the command line supplies no source (see [Composing a Runtime](composing-a-runtime.md#default-manifest-config)).
+A runtime can also compile in a default deployment with the `runtime!` macro — a manifest path via the `config:` field, or the manifest itself via the inline `link`/`plugin`/`guests`/`mounts` keys (each guest entry carries its own `routes`) — used only when the command line supplies no source (see [Composing a Runtime](composing-a-runtime.md#default-manifest-config)).
 
 A manifest declares guests, mounts, routes, and (eventually) transports. Every field is optional except at least one `[[guest]]`. Paths resolve relative to the manifest's own directory.
 
@@ -32,13 +32,13 @@ The full field reference lives in [Configuration](../reference/configuration.md#
 
 ## Programmatic manifests
 
-Everything the TOML expresses can also be assembled in Rust: `omnia::Manifest` is the same schema as a value, with fluent setters for guests, mounts, dispatch interfaces, and routes. Pass it to the deployment builder (or the `runtime!`-generated `run(builder)`) instead of a file path:
+Everything the TOML expresses can also be assembled in Rust: `omnia::Manifest` is the same schema as a value, with fluent setters for guests, mounts, link interfaces, and routes. Pass it to the deployment builder (or the `runtime!`-generated `run(builder)`) instead of a file path:
 
 ```rust,ignore
 use omnia::{DeploymentBuilder, GuestEntry, Manifest};
 
 let manifest = Manifest::new()
-    .plugins(["omnia:link/audit"])
+    .link(["omnia:link/audit"])
     .guest(GuestEntry::new("api", "./guests/api.wasm").route_http("/"))
     .guest(GuestEntry::new("admin", "./guests/admin.wasm").route_http("/admin"));
 
@@ -103,10 +103,11 @@ The [`model`](../../examples/model/) example lends a mounted workspace to a mode
 
 ## Guest-to-guest linking
 
-One guest can import an interface that another guest exports, with the host mediating the call. The deployment names the interface in its top-level `plugins` list:
+One guest can import an interface that another guest exports, with the host mediating the call. The deployment names the interface in its `[link] interfaces`:
 
 ```toml
-plugins = ["omnia:link/echo"]
+[link]
+interfaces = ["omnia:link/echo"]
 
 [[guest]]
 id = "responder"
@@ -121,7 +122,7 @@ At startup, the runtime polyfills each dispatched interface onto the shared link
 
 Notes:
 
-- `plugins` is deployment-wide: the linker is shared, so a dispatched interface is wired for the whole deployment, and any guest importing it may call it. `--plugins <interface>` on the command line unions with the manifest's list. An exporter need not be loaded at startup — a guest registered later can serve the interface.
+- `[link] interfaces` is deployment-wide: the linker is shared, so a dispatched interface is wired for the whole deployment, and any guest importing it may call it. `--link <interface>` on the command line unions with the manifest's list. An exporter need not be loaded at startup — a guest registered later can serve the interface. A runtime built without the `link` feature refuses a non-empty list at startup.
 - Nested dispatch depth is bounded by `MAX_DISPATCH_DEPTH` (default 8) to catch accidental recursion.
 - Only the in-process transport is implemented; declaring `unix`, `nats`, or `quic` under `[transport]` is rejected at load.
 

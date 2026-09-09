@@ -9,7 +9,7 @@ Every key the `omnia::runtime!` macro accepts, with exact semantics. The task-or
 | `hosts:` | The `Host: Backend` map — which WASI interfaces are linked and what implements them | Always (except a backend-less command runtime) |
 | `mode:` | `server` (default) or `command` | Running jobs/CLIs instead of servers |
 | `config:` | Compile in a default manifest *path* | You want `run` with no arguments to work |
-| `plugins:`, `guests:`, `mounts:` | Compile in a default manifest *value* (inline) | Same as `config:`, but self-contained — no TOML file at run time |
+| `link:`, `plugin:`, `guests:`, `mounts:` | Compile in a default manifest *value* (inline) | Same as `config:`, but self-contained — no TOML file at run time |
 
 There is no key for raw argv passthrough: a command-mode runtime with a compiled-in deployment is a [direct command](#direct-commands-raw-argv-passthrough) automatically.
 
@@ -66,14 +66,16 @@ The value is any expression evaluating to a path. Anchoring it with `env!("CARGO
 
 `config:` and the inline manifest keys are mutually exclusive — a runtime compiles in a manifest path or a manifest value, not both.
 
-## Inline manifest keys (`plugins:`, `guests:`, `mounts:`)
+## Inline manifest keys (`link:`, `plugin:`, `guests:`, `mounts:`)
 
 The deployment `omnia.toml` expresses can also be written directly in the macro, mirroring the `omnia::Manifest` schema. The macro expands the keys to a `Manifest` value compiled into the generated `main` as the same lowest-precedence fallback as `config:`:
 
 ```rust
 omnia::runtime!({
-    plugins: {
+    link: {
         interfaces: ["omnia:link/echo"],     // host-mediated interfaces (deployment-wide)
+    },
+    plugin: {
         locations: [                         // optional: loader acquisition policy
             { name: ".", path: concat!(env!("CARGO_MANIFEST_DIR"), "/workspace") },
         ],
@@ -108,17 +110,19 @@ omnia::runtime!({
 - Relative paths resolve against the process working directory at run time, so anchor them with `env!("CARGO_MANIFEST_DIR")` as with `config:`.
 - Routes are declared per guest, on the target entry's `routes:` block — one pattern list per trigger (`http` prefixes, `messaging` topics, `websocket` routes), with the declaring guest as the implicit target. There is no top-level `routes:` key.
 - A guest entry also accepts `command: true` (a literal bool), marking it as the command-mode target — see [Command routing](#command-routing-command-true).
-- Host-mediated interfaces are declared once, deployment-wide, in the top-level `plugins:` block's `interfaces:` list — the linker is shared, so there is no per-guest form. `run --plugins` at the CLI unions with the compiled-in list. A bare `plugins: [...]` list is a compile error naming the block shape.
-- Declaring a [`locations:` list](#plugin-locations-locations) also links the `omnia:plugins/loader` host capability (guest-requested plugin loading), which ships behind `omnia`'s non-default `plugin` feature; only guests whose world imports it can reach it. The list is the deployment's acquisition policy — the acquisition seam behind `loader.load`. An interfaces-only `plugins:` block links no loader and builds without the feature, so a guest importing `omnia:plugins/loader` in such a deployment fails at instantiation; a bare `plugins: {}` beside `config:` does link it, over the TOML's `[[location]]` entries (without `config:` a bare block is a compile error, since it would declare nothing). Locations are manifest data (`[[location]]` in `omnia.toml`), so like every inline key they are mutually exclusive with `config:`; a config-file deployment declares them in the TOML.
+- Host-mediated interfaces are declared once, deployment-wide, in the top-level `link:` block's `interfaces:` list — the linker is shared, so there is no per-guest form. `run --link` at the CLI unions with the compiled-in list. A bare `link: [...]` list is a compile error naming the block shape; a bare `link: {}` is a compile error because it would declare nothing. Declaring `link: { interfaces: [...] }` requires omnia's `link` feature; a runtime without it refuses a non-empty interface list at `Manifest::validate`. The removed `plugins:` key errors pointing at both `link:` and `plugin:`.
+- Declaring a [`locations:` list](#plugin-locations-locations) also links the `omnia:plugins/loader` host capability (guest-requested plugin loading), which ships behind `omnia`'s non-default `plugin` feature; only guests whose world imports it can reach it. The list is the deployment's acquisition policy — the acquisition seam behind `loader.load`. A `link:`-only invocation never references the loader and builds without the feature, so a guest importing `omnia:plugins/loader` in such a deployment fails at instantiation; a bare `plugin: {}` beside `config:` does link it, over the TOML's `[[plugin.location]]` entries (without `config:` a bare block is a compile error, since it would declare nothing). Locations are manifest data (`[[plugin.location]]` in `omnia.toml`), so like every inline key they are mutually exclusive with `config:`; a config-file deployment declares them in the TOML. The two features are independent: neither block implies the other.
 
 ### Plugin locations (`locations:`)
 
-The `locations:` list declares the deployment's acquisition roots. Each entry lowers to an `omnia::Location` on the compiled-in manifest, and the generated `Wiring::extend` hook installs them through `omnia::Plugins::install_declared`, each filling its location kind's slot on `Plugins`. Those paths live behind `omnia`'s `plugin` feature, so a deployment declaring `locations:` enables it (`omnia = { version = "...", features = ["plugin"] }`); without it the expansion fails to compile naming `omnia::WasiPlugins`, and a config-file deployment with `[[location]]` entries is refused at startup.
+The `locations:` list declares the deployment's acquisition roots. Each entry lowers to an `omnia::Location` on the compiled-in manifest, and the generated `Wiring::extend` hook installs them through `omnia::Plugins::install_declared`, each filling its location kind's slot on `Plugins`. Those paths live behind `omnia`'s `plugin` feature, so a deployment declaring `plugin: { locations: [...] }` enables it (`omnia = { version = "...", features = ["plugin"] }`); without it the expansion fails to compile naming `omnia::WasiPlugins`, and a config-file deployment with `[[plugin.location]]` entries is refused at startup.
 
 ```rust
 omnia::runtime!({
-    plugins: {
+    link: {
         interfaces: ["emery:adapter/probe"],
+    },
+    plugin: {
         locations: [
             { name: ".", path: project_root() },  // path loads resolve here
             { registry: "ghcr.io" },              // package references fetch here

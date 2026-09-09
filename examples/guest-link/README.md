@@ -6,7 +6,7 @@ Proves host-mediated dynamic linking: one guest reaches another through an inter
 
 - `responder` ([`responder.rs`](responder.rs)) **exports** `omnia:link/echo`. It declares no trigger of its own, so it is reachable *only* via dispatch.
 - `router` ([`router.rs`](router.rs)) **imports** `omnia:link/echo` and exposes `run(message)`. Its component does not satisfy the import.
-- The [`runtime!` inline manifest](runtime.rs) — equivalently [`omnia.toml`](omnia.toml) for `--config`, or the programmatic [`Manifest`](dynamic.rs) — names `omnia:link/echo` in the deployment's `plugins` list. The runtime core polyfills that import onto the shared linker and, at startup, wires the serve side of every dispatched interface.
+- The [`runtime!` inline manifest](runtime.rs) — equivalently [`omnia.toml`](omnia.toml) for `--config`, or the programmatic [`Manifest`](dynamic.rs) — names `omnia:link/echo` in the deployment's `[link] interfaces`. The runtime core polyfills that import onto the shared linker and, at startup, wires the serve side of every dispatched interface.
 
 When `router.run("hello")` calls the imported `echo("responder", "hello")`:
 
@@ -22,7 +22,7 @@ The selector reads the leading argument (`"responder"`) to pick the target and f
 
 The interface also carries an async-typed dual, `echo-slow: async func`, called by the router's async-lifted `run-slow`. It rides the same dispatch, registered with `func_new_concurrent` instead of `func_new_async` (an async-typed import fails the sync registration's typecheck), and the responder parks on a `wasi:clocks` timer before answering — proving the round-trip against a callee that is genuinely pending.
 
-The runtime core stays generic (Law 2): `plugins` and the selector operate on the opaque interface string `omnia:link/echo` and opaque guest ids — Omnia never parses the interface's meaning.
+The runtime core stays generic (Law 2): `[link] interfaces` and the selector operate on the opaque interface string `omnia:link/echo` and opaque guest ids — Omnia never parses the interface's meaning.
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ deployment at runtime:
 
 ```rust
 let manifest = Manifest::new()
-    .plugins(["omnia:link/echo"])
+    .link(["omnia:link/echo"])
     .guest(GuestEntry::new("responder", responder_wasm))
     .guest(GuestEntry::new("router", router_wasm));
 

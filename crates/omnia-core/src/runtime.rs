@@ -202,7 +202,7 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
     }
 
     /// The deployment's plugin acquisition locations (the manifest's
-    /// `[[location]]` entries), for the loader capability to install against.
+    /// `[[plugin.location]]` entries), for the loader capability to install against.
     #[must_use]
     pub fn plugin_locations(&self) -> &[Location] {
         &self.inner.locations

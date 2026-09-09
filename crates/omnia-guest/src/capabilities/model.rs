@@ -8,8 +8,25 @@
 //! against the guest's preopens at the call site: the longest preopen whose
 //! name prefixes the path becomes the lent root descriptor and the
 //! remainder rides as the grant's subpath.
+//!
+//! Acceptance of an answer is the guest's: a request with [`Request::check`]
+//! set receives each candidate as a tool call named `check` and answers
+//! `Ok` to finish or `Err(correction)` to send the model round again. The
+//! typed [`Question`] (feature `schema`) runs that exchange for a
+//! `JsonSchema + Deserialize` answer type.
+
+#[cfg(feature = "schema")]
+mod question;
 
 use std::future::Future;
+
+use serde::de::DeserializeOwned;
+
+#[cfg(feature = "schema")]
+pub use self::question::{Findings, Question, ToolFuture, Tools};
+
+/// The reserved tool name a `check` candidate arrives under.
+pub const CHECK_TOOL: &str = "check";
 
 /// Complete request for one completion.
 #[derive(Clone, Debug, Default, PartialEq, Eq, bon::Builder)]
@@ -24,13 +41,22 @@ pub struct Request {
     pub messages: Vec<Message>,
     /// Sampling and length controls.
     pub generation: Option<Generation>,
-    /// Required output shape and validation rules.
+    /// Output shape hint steering the provider; nothing is validated
+    /// against it.
     #[builder(default)]
     pub format: Format,
     /// Guest-declared functions and MCP grants merged with host-injected
-    /// tools at the backend.
+    /// tools at the backend. The names `read`, `list`, `write`, and `check`
+    /// are reserved.
     #[builder(default)]
     pub tools: Vec<Tool>,
+    /// Ask the guest to accept each candidate answer: the candidate arrives
+    /// at the [`Model::complete_with`] handler as a [`ToolCall`] named
+    /// `check` whose `arguments` are the candidate text. `Ok` accepts it as
+    /// the reply; `Err(text)` is appended to the conversation verbatim as
+    /// the correction turn and the backend goes round again.
+    #[builder(default)]
+    pub check: bool,
     /// Deployment-local path of the directory to lend through
     /// `grants.workspace`, giving the backend (and any spawned agent) that
     /// directory. On `wasm32` the path must sit on (or beneath) a preopen —
@@ -96,26 +122,29 @@ pub enum Effort {
     High,
 }
 
-/// Output shape constraint for the completion.
+/// Output shape hint steering the provider.
+///
+/// Passed as `response_format` where the provider constrains decoding,
+/// instruction prose where it does not. Nothing is validated against it;
+/// acceptance is the request's `check`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Format {
-    /// Answer is plain text.
+    /// Plain text.
     #[default]
     Text,
-    /// Answer must parse as a JSON object.
+    /// Steer toward a JSON object.
     Json,
-    /// Answer must validate against the given JSON Schema; the host enforces
-    /// this at the `create` gate.
+    /// Steer toward the given JSON Schema.
     Schema(SchemaFormat),
 }
 
-/// JSON Schema constrained output.
+/// JSON Schema steering output.
 #[derive(Clone, Debug, PartialEq, Eq, bon::Builder)]
 pub struct SchemaFormat {
     /// Schema name passed to the provider (e.g. `review_result`).
     #[builder(into)]
     pub name: String,
-    /// JSON Schema document the answer must conform to.
+    /// JSON Schema document the answer should conform to.
     #[builder(into)]
     pub schema: String,
 }
@@ -133,8 +162,8 @@ pub enum Tool {
 /// Guest-declared function tool advertised to the model.
 #[derive(Clone, Debug, PartialEq, Eq, bon::Builder)]
 pub struct Function {
-    /// Tool name. Must not collide with reserved host-injected tool names
-    /// (`read`, `list`, `write`).
+    /// Tool name. Must not collide with the reserved names (`read`, `list`,
+    /// `write`, `check`).
     #[builder(into)]
     pub name: String,
     /// Natural-language description for the model.
@@ -159,10 +188,11 @@ pub struct McpGrant {
     pub url: String,
 }
 
-/// One validated completion result.
+/// One completion result.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reply {
-    /// The validated answer, per [`Request::format`](Request).
+    /// The text the request's `check` accepted — or, without a check, the
+    /// model's final text as the backend received it.
     pub answer: String,
     /// Token accounting, when the backend reports it.
     pub usage: Option<Usage>,
@@ -183,14 +213,12 @@ pub struct Usage {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// The request itself is malformed (empty `messages`, reserved tool
-    /// name, invalid schema document); retrying without changing it is
+    /// name, schema that is not JSON); retrying without changing it is
     /// pointless.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
-    /// Backend produced output that never passed validation.
-    #[error("invalid answer: {0}")]
-    InvalidAnswer(String),
-    /// Iteration, token, or time budget exhausted.
+    /// Iteration, token, or time budget exhausted. When the last round ended
+    /// on a rejected `check`, the detail is that correction text.
     #[error("budget exhausted: {0}")]
     BudgetExhausted(String),
     /// Non-repairable tool error.
@@ -207,10 +235,23 @@ pub enum Error {
 pub struct ToolCall {
     /// Correlation id the session answers by; the handler never needs it.
     pub id: String,
-    /// The declared function-tool name the model called.
+    /// The declared function-tool name the model called, or the reserved
+    /// `check` when the request asked for one.
     pub name: String,
-    /// JSON arguments object for the tool, per its declared parameters schema.
+    /// JSON arguments object for the tool, per its declared parameters
+    /// schema; the candidate text for `check`.
     pub arguments: String,
+}
+
+impl ToolCall {
+    /// Deserialize the call's `arguments` into `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns model-visible failure text when the arguments do not match `T`.
+    pub fn arguments<T: DeserializeOwned>(&self) -> Result<T, String> {
+        serde_json::from_str(&self.arguments).map_err(|error| format!("invalid arguments: {error}"))
+    }
 }
 
 /// Prompt completion (Omnia Model).
@@ -220,15 +261,15 @@ pub struct ToolCall {
 /// model's tool calls with the supplied closure; off `wasm32` the signatures
 /// are bare so hosts and tests supply their own provider.
 pub trait Model: Send + Sync {
-    /// Single-shot completion returning one validated reply. Any tool call
-    /// the model issues fails back to it; declare tools and answer them
-    /// through [`Model::complete_with`] instead.
+    /// Single-shot completion returning one reply. Any tool call the model
+    /// issues fails back to it; declare tools (or set `check`) and answer
+    /// them through [`Model::complete_with`] instead.
     #[cfg(not(target_arch = "wasm32"))]
     fn complete(&self, request: Request) -> impl Future<Output = Result<Reply, Error>> + Send;
 
-    /// Single-shot completion returning one validated reply. Any tool call
-    /// the model issues fails back to it; declare tools and answer them
-    /// through [`Model::complete_with`] instead.
+    /// Single-shot completion returning one reply. Any tool call the model
+    /// issues fails back to it; declare tools (or set `check`) and answer
+    /// them through [`Model::complete_with`] instead.
     #[cfg(target_arch = "wasm32")]
     fn complete(&self, request: Request) -> impl Future<Output = Result<Reply, Error>> + Send {
         self.complete_with(request, |call: ToolCall| async move {
@@ -296,6 +337,7 @@ pub trait Model: Send + Sync {
                 format: request.format.into(),
                 tools: request.tools.into_iter().map(Into::into).collect(),
                 grants: completion::Grants { workspace },
+                check: request.check,
             };
 
             let (mut results, results_rx) = wit_stream::new();
@@ -481,7 +523,6 @@ mod wire {
         fn from(error: completion::Error) -> Self {
             match error {
                 completion::Error::InvalidRequest(detail) => Self::InvalidRequest(detail),
-                completion::Error::InvalidAnswer(detail) => Self::InvalidAnswer(detail),
                 completion::Error::BudgetExhausted(detail) => Self::BudgetExhausted(detail),
                 completion::Error::ToolFailed(detail) => Self::ToolFailed(detail),
                 completion::Error::Backend(detail) => Self::Backend(detail),

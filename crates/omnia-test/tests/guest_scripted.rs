@@ -81,6 +81,78 @@ async fn complete_with_drives_scripted_calls_and_records_exchanges() {
     );
 }
 
+fn checked(content: &str) -> Request {
+    Request::builder()
+        .messages(vec![Message {
+            role: Role::User,
+            content: content.to_owned(),
+        }])
+        .check(true)
+        .build()
+}
+
+// The handler: accepts a candidate containing "ok", otherwise corrects.
+async fn judge(call: ToolCall) -> Result<String, String> {
+    assert_eq!(call.name, "check");
+    if call.arguments.contains("ok") {
+        Ok(String::new())
+    } else {
+        Err(format!("no: {}", call.arguments))
+    }
+}
+
+#[tokio::test]
+async fn check_accepts_first_candidate() {
+    let model = Scripted::answering(["ok"]);
+    let reply = model.complete_with(checked("go"), judge).await.expect("reply");
+    assert_eq!(reply.answer, "ok");
+    assert_eq!(
+        model.exchanges(),
+        [Exchange {
+            tool: "check".into(),
+            arguments: "ok".into(),
+            outcome: Ok(String::new()),
+        }]
+    );
+    model.assert_exhausted();
+}
+
+#[tokio::test]
+async fn check_corrects_then_accepts() {
+    let model = Scripted::answering(["bad", "ok"]);
+    let reply = model.complete_with(checked("go"), judge).await.expect("reply");
+    assert_eq!(reply.answer, "ok");
+    let exchanges = model.exchanges();
+    assert_eq!(exchanges.len(), 2);
+    assert_eq!(exchanges[0].outcome, Err("no: bad".into()));
+    assert_eq!(exchanges[1].outcome, Ok(String::new()));
+    assert_eq!(model.seen().len(), 2, "one scripted turn per attempt");
+    model.assert_exhausted();
+}
+
+#[tokio::test]
+async fn check_exhausts_on_the_last_rejection() {
+    let model = Scripted::answering(["bad", "worse"]);
+    let error = model.complete_with(checked("go"), judge).await.expect_err("never accepted");
+    assert_eq!(error, Error::BudgetExhausted("no: worse".into()));
+    model.assert_exhausted();
+}
+
+#[tokio::test]
+async fn check_skips_a_failed_turn() {
+    let model = Scripted::new([Err(Error::Backend("offline".into()))]);
+    let error = model.complete_with(checked("go"), judge).await.expect_err("backend failed");
+    assert_eq!(error, Error::Backend("offline".into()));
+    assert!(model.exchanges().is_empty(), "a failed turn has no candidate to check");
+}
+
+#[test]
+fn complete_rejects_a_check_request() {
+    let model = Scripted::default();
+    let result = catch_unwind(AssertUnwindSafe(|| drop(model.complete(checked("a")))));
+    assert!(result.is_err(), "complete must refuse a check request");
+}
+
 #[tokio::test]
 async fn complete_rejects_a_turn_with_scripted_calls() {
     let model = Scripted::answering(["x"]).calling(0, [call("t", "{}")]);

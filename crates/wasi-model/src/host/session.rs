@@ -7,7 +7,8 @@
 //! which answers the pending oneshot for each call id. Host enforcement —
 //! declared-tool check, call budget, result size cap, per-call timeout —
 //! lives here, once, and records a typed [`Error`] that the reply pipeline
-//! prefers over the backend's own failure.
+//! prefers over the backend's own failure. The reserved `check` call rides
+//! the same bridge outside the declared-tool check and the call budget.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -27,6 +28,7 @@ use crate::host::{Error, FutureResult, ToolOutcome};
 
 const CALL_QUEUE: usize = 8;
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
+const CHECK_TOOL: &str = "check";
 
 /// Shared state for one completion session: the calls bridge, the pending
 /// calls awaiting guest results, the call budget, and the first typed
@@ -76,7 +78,6 @@ impl Inner {
     fn record(&mut self, error: Error) -> anyhow::Error {
         let hard = anyhow!(match &error {
             Error::InvalidRequest(detail) => format!("invalid request: {detail}"),
-            Error::InvalidAnswer(detail) => format!("invalid answer: {detail}"),
             Error::BudgetExhausted(detail) => format!("budget exhausted: {detail}"),
             Error::ToolFailed(detail) => format!("tool failed: {detail}"),
             Error::Backend(detail) => format!("backend failure: {detail}"),
@@ -119,48 +120,67 @@ impl ToolSession {
     /// `ToolHost::call_tool` for the error contract.
     pub fn call(self: Arc<Self>, name: String, arguments: String) -> FutureResult<ToolOutcome> {
         async move {
-            let pending = self.reserve(&name)?;
-
-            let call = ToolCall {
-                id: pending.id.clone(),
-                name: name.clone(),
-                arguments,
-            };
-            if pending.calls.send(call).await.is_err() {
-                self.lock().pending.remove(&pending.id);
-                return Err(anyhow!(
-                    "guest dropped the calls stream before receiving tool call `{name}`"
-                ));
+            if !self.allowed.contains(&name) {
+                return Err(self.fail(Error::ToolFailed(format!(
+                    "model called `{name}`, which the request does not declare as a function tool"
+                ))));
             }
-
-            let output = self.wait_for_result(&pending.id, &name, pending.result).await?;
+            let pending = self.reserve(&name, true)?;
+            let output = self.exchange(pending, &name, arguments).await?;
             self.check_result(&name, output)
         }
         .boxed()
     }
 
-    fn reserve(&self, name: &str) -> anyhow::Result<PendingCall> {
-        if !self.allowed.iter().any(|allowed| allowed == name) {
-            return Err(self.fail(Error::ToolFailed(format!(
-                "model called `{name}`, which the request does not declare as a function tool"
-            ))));
+    /// Ask the guest to accept `candidate` through the reserved `check`
+    /// call; see `ToolHost::check` for the contract.
+    pub fn check(self: Arc<Self>, candidate: String) -> FutureResult<Result<(), String>> {
+        async move {
+            let pending = self.reserve(CHECK_TOOL, false)?;
+            let output = self.exchange(pending, CHECK_TOOL, candidate).await?;
+            Ok(output.map(drop))
         }
+        .boxed()
+    }
 
+    // Send one call toward the guest and await its result.
+    async fn exchange(
+        &self, pending: PendingCall, name: &str, arguments: String,
+    ) -> anyhow::Result<ToolOutcome> {
+        let call = ToolCall {
+            id: pending.id.clone(),
+            name: name.to_owned(),
+            arguments,
+        };
+        if pending.calls.send(call).await.is_err() {
+            self.lock().pending.remove(&pending.id);
+            return Err(anyhow!(
+                "guest dropped the calls stream before receiving tool call `{name}`"
+            ));
+        }
+        self.wait_for_result(&pending.id, name, pending.result).await
+    }
+
+    // Mint a pending call; `budgeted` calls consume the tool-call budget.
+    fn reserve(&self, name: &str, budgeted: bool) -> anyhow::Result<PendingCall> {
         let mut inner = self.lock();
         let Some(calls) = inner.calls.clone() else {
             return Err(anyhow!("tool call `{name}` after the session closed its calls stream"));
         };
-        if inner.remaining == 0 {
-            inner.calls = None;
-            return Err(inner.record(Error::BudgetExhausted(format!(
-                "tool-call budget of {} exhausted at `{name}`",
-                self.limits.max_tool_calls
-            ))));
+        if budgeted {
+            if inner.remaining == 0 {
+                inner.calls = None;
+                return Err(inner.record(Error::BudgetExhausted(format!(
+                    "tool-call budget of {} exhausted at `{name}`",
+                    self.limits.max_tool_calls
+                ))));
+            }
+            inner.remaining -= 1;
         }
 
-        inner.remaining -= 1;
         inner.next_id += 1;
-        let id = format!("call-{}", inner.next_id);
+        let prefix = if budgeted { "call" } else { name };
+        let id = format!("{prefix}-{}", inner.next_id);
         let (sender, result) = oneshot::channel();
         inner.pending.insert(id.clone(), sender);
         drop(inner);

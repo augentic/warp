@@ -12,6 +12,13 @@ pub trait ToolHost: Debug + Send + Sync {
     /// text, fed back to the model as repairable content.
     fn call_tool(&self, name: String, arguments: String) -> FutureResult<ToolOutcome>;
 
+    /// Ask the guest whether `candidate` is the answer. `Ok(())` finishes
+    /// the completion; `Err(text)` is the correction turn the backend appends
+    /// verbatim. Routed over the session's `calls` stream as the reserved
+    /// tool `check`; `tool_timeout` applies, the tool-call budget does not.
+    /// The outer error is a hard host failure (closed session, timeout).
+    fn check(&self, candidate: String) -> FutureResult<Result<(), String>>;
+
     /// Bounded workspace read via the lent `wasi:filesystem` capability.
     fn read(&self, path: String) -> FutureResult<Vec<u8>>;
 

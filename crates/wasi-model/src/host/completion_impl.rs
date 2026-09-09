@@ -1,4 +1,4 @@
-//! The `create` host binding and its answer gate.
+//! The `create` host binding and its reply pipeline.
 
 use std::fmt;
 use std::sync::Arc;
@@ -8,7 +8,9 @@ use futures::{FutureExt as _, future};
 use omnia_core::HasMounts;
 use wasmtime::component::{Accessor, FutureReader, StreamReader};
 
-use crate::host::generated::omnia::model::completion::{Host, HostWithStore, Session, ToolResult};
+use crate::host::generated::omnia::model::completion::{
+    Host, HostWithStore, Reply, Session, ToolResult,
+};
 use crate::host::session::{CallsProducer, ReplyTask, ResultsConsumer, SessionClose, ToolSession};
 use crate::host::tool_host::DirEntry;
 use crate::host::workspace::{self, Workspace};
@@ -48,7 +50,6 @@ where
             // call model backend with request and tool host "closure"
             let limits = access.get().ctx.limits();
             let allowed = request.tool_names();
-            let format = request.format.clone();
 
             let (session, calls_rx) = ToolSession::new(limits, allowed);
             let tool_host: Arc<dyn ToolHost> = Arc::new(BoundToolHost {
@@ -65,8 +66,21 @@ where
             let reply_task = ReplyTask::spawn(async move {
                 let _close = close;
                 match answer.await {
-                    Ok(answer) => session.take_error().map_or_else(|| answer.project(&format), Err),
-                    Err(error) => Err(session.take_error().unwrap_or_else(|| error.into())),
+                    Ok(answer) => session.take_error().map_or_else(
+                        || {
+                            Ok(Reply {
+                                answer: answer.answer,
+                                usage: answer.usage.map(Into::into),
+                            })
+                        },
+                        Err,
+                    ),
+                    // A backend that fails with a typed `Error` (a rejected
+                    // check exhausting its rounds) keeps it; anything else
+                    // is a `backend` failure.
+                    Err(error) => Err(session
+                        .take_error()
+                        .unwrap_or_else(|| error.downcast::<Error>().unwrap_or_else(Into::into))),
                 }
             });
 
@@ -123,6 +137,10 @@ impl BoundToolHost {
 impl ToolHost for BoundToolHost {
     fn call_tool(&self, name: String, arguments: String) -> FutureResult<ToolOutcome> {
         Arc::clone(&self.session).call(name, arguments)
+    }
+
+    fn check(&self, candidate: String) -> FutureResult<Result<(), String>> {
+        Arc::clone(&self.session).check(candidate)
     }
 
     fn read(&self, path: String) -> FutureResult<Vec<u8>> {

@@ -5,11 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use futures::FutureExt as _;
 use omnia_wasi_model::{
-    Answer, Format, FutureResult, Limits, Request, Tool, ToolHost, WasiModelCtx,
+    Answer, Error, Format, FutureResult, Limits, Request, Tool, ToolHost, WasiModelCtx,
 };
-use serde_json::Value;
 
 use crate::{Exchange, Script, Seen, SeenFormat};
+
+const CHECK_TOOL: &str = "check";
 
 /// One step a scripted turn drives through the session before answering.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,7 +48,8 @@ pub struct Completion {
     /// Tool calls and workspace operations driven, in order, before the
     /// answer returns.
     pub steps: Vec<Step>,
-    /// The answer the host projects through its format gate.
+    /// The answer, offered to the guest's `check` first when the request
+    /// asks for one.
     pub answer: Answer,
 }
 
@@ -63,23 +65,25 @@ impl Completion {
 /// A FIFO model backend recording every request and session exchange.
 ///
 /// The host-side counterpart of the guest `Scripted` double: answers are
-/// JSON values (or full [`Answer`]s) the `omnia:model` host projects to the
-/// guest through its format gate, and a turn may drive declared tools and
-/// the host-injected workspace tools through the session before answering.
-/// A hard session failure — undeclared tool, exhausted budget, closed
-/// results stream, a workspace op without a grant — fails the completion the
-/// way a real backend's would. A call past the script fails the completion
-/// the guest sees — a panic inside a wasmtime host call would be worse — and
-/// records the overrun so [`ScriptedModel::assert_exhausted`] still fails
-/// the test.
+/// strings (or full [`Answer`]s) the `omnia:model` host hands to the guest
+/// unvalidated, and a turn may drive declared tools and the host-injected
+/// workspace tools through the session before answering. A request with
+/// `check` set plays the backend's loop: each scripted turn is one
+/// candidate offered to the guest's `check` and recorded; a rejection
+/// advances to the next turn, and a script exhausted on a rejection is
+/// `budget-exhausted` carrying the correction. A hard session failure —
+/// undeclared tool, exhausted budget, closed results stream, a workspace op
+/// without a grant — fails the completion the way a real backend's would. A
+/// call past the script fails the completion the guest sees — a panic
+/// inside a wasmtime host call would be worse — and records the overrun so
+/// [`ScriptedModel::assert_exhausted`] still fails the test.
 ///
 /// ```no_run
 /// use omnia_test::host::{Backends, Deployment, ScriptedModel};
 /// use omnia_wasi_model::WasiModel;
-/// use serde_json::json;
 ///
 /// # async fn example(guest: &'static str) -> anyhow::Result<()> {
-/// let model = ScriptedModel::answering([json!("42")]).calling(0, [("lookup", "{}")]);
+/// let model = ScriptedModel::answering(["42"]).calling(0, [("lookup", "{}")]);
 /// let backends = Backends::defaults().await.model(model);
 /// Deployment::new().guest("agent", guest).run_host::<WasiModel, _>(backends.clone()).await?;
 /// assert_eq!(backends.model.exchanges()[0].tool, "lookup");
@@ -97,17 +101,17 @@ pub struct ScriptedModel {
 
 impl Default for ScriptedModel {
     fn default() -> Self {
-        Self::answering([])
+        Self::replying([])
     }
 }
 
 impl ScriptedModel {
-    /// A script of ordered answer values.
-    pub fn answering(answers: impl IntoIterator<Item = Value>) -> Self {
-        Self::replying(answers.into_iter().map(Into::into))
+    /// A script of ordered answer strings.
+    pub fn answering<S: Into<String>>(answers: impl IntoIterator<Item = S>) -> Self {
+        Self::replying(answers.into_iter().map(|answer| Answer::from(answer.into())))
     }
 
-    /// A script of ordered full answers — value, usage, and transcript.
+    /// A script of ordered full answers — text, usage, and transcript.
     pub fn replying(answers: impl IntoIterator<Item = Answer>) -> Self {
         Self {
             script: Script::new(answers.into_iter().map(Completion::answer)),
@@ -193,9 +197,9 @@ impl ScriptedModel {
     ///
     /// Panics if a fallback was already set.
     #[must_use]
-    pub fn then(self, answer: impl Fn() -> Value + Send + Sync + 'static) -> Self {
+    pub fn then(self, answer: impl Fn() -> String + Send + Sync + 'static) -> Self {
         Self {
-            script: self.script.then(move || Completion::answer(answer().into())),
+            script: self.script.then(move || Completion::answer(Answer::from(answer()))),
             ..self
         }
     }
@@ -208,7 +212,8 @@ impl ScriptedModel {
 
     /// Every driven exchange in call order: declared tools under their own
     /// names, workspace operations under the host-injected `read`, `write`,
-    /// and `list`.
+    /// and `list`, and each `check` round under `check` (candidate in,
+    /// correction as the `Err` outcome).
     ///
     /// # Panics
     ///
@@ -250,66 +255,96 @@ impl ScriptedModel {
     }
 }
 
+impl ScriptedModel {
+    // Pop the next scripted turn for `request`, or the backend failure a
+    // guest completing past the script must see — not a host panic inside
+    // the wasmtime call; `try_next` records the overrun for
+    // `assert_exhausted`.
+    fn turn(&self, request: &Request) -> anyhow::Result<Completion> {
+        self.script.try_next(Seen::from(request)).ok_or_else(|| {
+            let consumed = self.script.seen().len();
+            anyhow::anyhow!(
+                "model script exhausted: {} turn(s) consumed, none scripted for request \
+                 #{consumed}",
+                consumed - 1
+            )
+        })
+    }
+
+    async fn drive(&self, tool_host: &Arc<dyn ToolHost>, steps: Vec<Step>) -> anyhow::Result<()> {
+        for step in steps {
+            let exchange = match step {
+                Step::Tool { name, arguments } => Exchange {
+                    outcome: tool_host.call_tool(name.clone(), arguments.clone()).await?,
+                    tool: name,
+                    arguments,
+                },
+                Step::Read { path } => {
+                    let bytes = tool_host.read(path.clone()).await?;
+                    Exchange {
+                        tool: "read".to_owned(),
+                        arguments: path,
+                        outcome: Ok(String::from_utf8_lossy(&bytes).into_owned()),
+                    }
+                }
+                Step::Write { path, bytes } => {
+                    tool_host.write(path.clone(), bytes).await?;
+                    Exchange {
+                        tool: "write".to_owned(),
+                        arguments: path,
+                        outcome: Ok(String::new()),
+                    }
+                }
+                Step::List { path } => {
+                    let mut names: Vec<String> = tool_host
+                        .list(path.clone())
+                        .await?
+                        .into_iter()
+                        .map(|entry| entry.name)
+                        .collect();
+                    names.sort();
+                    Exchange {
+                        tool: "list".to_owned(),
+                        arguments: path,
+                        outcome: Ok(names.join(",")),
+                    }
+                }
+            };
+            self.exchanges.lock().expect("exchanges lock").push(exchange);
+        }
+        Ok(())
+    }
+}
+
 impl WasiModelCtx for ScriptedModel {
     fn complete(&self, request: Request, tool_host: Arc<dyn ToolHost>) -> FutureResult<Answer> {
         self.lent.lock().expect("lent lock").push(tool_host.local_path().map(Path::to_path_buf));
-        // A guest that completes past the script must see a backend failure,
-        // not a host panic inside the wasmtime call; `try_next` records the
-        // overrun for `assert_exhausted`.
-        let Some(turn) = self.script.try_next(Seen::from(&request)) else {
-            let consumed = self.script.seen().len();
-            return async move {
-                Err(anyhow::anyhow!(
-                    "model script exhausted: {} turn(s) consumed, none scripted for request \
-                     #{consumed}",
-                    consumed - 1
-                ))
-            }
-            .boxed();
-        };
-        let exchanges = Arc::clone(&self.exchanges);
+        let this = self.clone();
         async move {
-            for step in turn.steps {
-                let exchange = match step {
-                    Step::Tool { name, arguments } => Exchange {
-                        outcome: tool_host.call_tool(name.clone(), arguments.clone()).await?,
-                        tool: name,
-                        arguments,
-                    },
-                    Step::Read { path } => {
-                        let bytes = tool_host.read(path.clone()).await?;
-                        Exchange {
-                            tool: "read".to_owned(),
-                            arguments: path,
-                            outcome: Ok(String::from_utf8_lossy(&bytes).into_owned()),
-                        }
+            loop {
+                let turn = this.turn(&request)?;
+                this.drive(&tool_host, turn.steps).await?;
+                if !request.check {
+                    return Ok(turn.answer);
+                }
+
+                let outcome = tool_host.check(turn.answer.answer.clone()).await?;
+                this.exchanges.lock().expect("exchanges lock").push(Exchange {
+                    tool: CHECK_TOOL.to_owned(),
+                    arguments: turn.answer.answer.clone(),
+                    outcome: outcome.clone().map(|()| String::new()),
+                });
+                match outcome {
+                    Ok(()) => return Ok(turn.answer),
+                    // The next scripted answer is the model's corrected
+                    // attempt; none left is the backend's round budget,
+                    // typed so the host surfaces it as `budget-exhausted`.
+                    Err(correction) if this.script.remaining() == 0 => {
+                        return Err(Error::BudgetExhausted(correction).into());
                     }
-                    Step::Write { path, bytes } => {
-                        tool_host.write(path.clone(), bytes).await?;
-                        Exchange {
-                            tool: "write".to_owned(),
-                            arguments: path,
-                            outcome: Ok(String::new()),
-                        }
-                    }
-                    Step::List { path } => {
-                        let mut names: Vec<String> = tool_host
-                            .list(path.clone())
-                            .await?
-                            .into_iter()
-                            .map(|entry| entry.name)
-                            .collect();
-                        names.sort();
-                        Exchange {
-                            tool: "list".to_owned(),
-                            arguments: path,
-                            outcome: Ok(names.join(",")),
-                        }
-                    }
-                };
-                exchanges.lock().expect("exchanges lock").push(exchange);
+                    Err(_) => {}
+                }
             }
-            Ok(turn.answer)
         }
         .boxed()
     }
@@ -344,6 +379,7 @@ impl From<&Request> for Seen {
             // The descriptor lend cannot cross into a plain record; the
             // subpath beneath the lent root is what the guest chose.
             workspace: request.grants.workspace.as_ref().map(|grant| grant.subpath.clone()),
+            check: request.check,
         }
     }
 }

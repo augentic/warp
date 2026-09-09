@@ -7,7 +7,8 @@ interface completion {
     /// A JSON document.
     type json = string;
 
-    /// Answer validated against `request.format` before the guest sees it.
+    /// The text the guest's check accepted — or, without a check, the
+    /// model's final text as the backend received it.
     type answer = string;
 
     /// Chat turn author.
@@ -23,20 +24,22 @@ interface completion {
         content: string,
     }
 
-    /// JSON Schema constrained output (`response_format.json_schema` in provider APIs).
+    /// JSON Schema steering output (`response_format.json_schema` in provider APIs).
     record schema {
         /// Schema name passed to the provider.
         name: string,
-        /// JSON Schema document the answer must conform to.
+        /// JSON Schema document the answer should conform to.
         schema: json,
     }
 
-    /// Output shape constraint, enforced by the host validation gate.
+    /// Output shape hint steering the provider (`response_format` where the
+    /// provider constrains decoding, instruction prose where it does not).
+    /// Nothing is validated against it; acceptance is the guest's check.
     variant format {
         text,
-        /// Answer must parse as a JSON object.
+        /// Steer toward a JSON object.
         json,
-        /// Answer must validate against the given JSON Schema.
+        /// Steer toward the given JSON Schema.
         schema(schema),
     }
 
@@ -60,7 +63,7 @@ interface completion {
 
     /// Guest-declared function tool advertised to the model.
     record function {
-        /// Must not collide with the reserved host-injected names (`read`, `list`, `write`).
+        /// Must not collide with the reserved names (`read`, `list`, `write`, `check`).
         name: string,
         /// Natural-language description for the model.
         description: string,
@@ -107,9 +110,16 @@ interface completion {
         messages: list<message>,
         generation: option<generation>,
         format: format,
-        /// Merged with host-injected tools at the backend.
+        /// Merged with host-injected tools at the backend. The names `read`,
+        /// `list`, `write`, and `check` are reserved.
         tools: list<tool>,
         grants: grants,
+        /// Ask the guest to accept each candidate answer before it becomes
+        /// the reply. The candidate arrives on `session.calls` as a tool-call
+        /// named `check` whose arguments are the candidate text; `ok` accepts
+        /// it, `err(text)` is appended to the conversation verbatim as the
+        /// correction turn and the backend goes round again.
+        check: bool,
     }
 
     /// Token accounting, when the backend reports it.
@@ -120,7 +130,7 @@ interface completion {
         reasoning-tokens: option<u32>,
     }
 
-    /// One validated completion result.
+    /// One completion result.
     record reply {
         answer: answer,
         usage: option<usage>,
@@ -131,7 +141,8 @@ interface completion {
         /// Correlation id: calls are parallel and results unordered, so
         /// results answer calls by `id`.
         id: string,
-        /// A function-tool name declared in `request.tools`.
+        /// A function-tool name declared in `request.tools`, or the reserved
+        /// `check` when `request.check` is set.
         name: string,
         /// Arguments object, per the tool's declared parameters schema.
         arguments: json,
@@ -148,9 +159,8 @@ interface completion {
     variant error {
         /// Malformed request; retrying unchanged is pointless.
         invalid-request(string),
-        /// Backend output never passed validation.
-        invalid-answer(string),
-        /// Iteration, token, or time budget exhausted.
+        /// Iteration, token, or time budget exhausted. When the last round
+        /// ended on a rejected check, the detail is that `err` text.
         budget-exhausted(string),
         /// Non-repairable tool error.
         tool-failed(string),

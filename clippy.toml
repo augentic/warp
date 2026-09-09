@@ -34,7 +34,6 @@ allowed-duplicate-crates = [
   "itertools",
   "jni",
   "jni-sys",
-  "jsonschema",
   "linux-raw-sys",
   "md-5",
   "openssl-probe",

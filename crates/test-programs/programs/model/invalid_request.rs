@@ -1,4 +1,4 @@
-//! The host validation gate refuses malformed requests before the backend runs.
+//! The host refuses malformed requests before the backend runs.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -39,6 +39,18 @@ async fn scenario() {
         .build();
     assert!(refused(reserved).await.contains("reserved tool name"));
 
+    let check = Request::builder()
+        .messages(vec![user("hi")])
+        .tools(vec![Tool::Function(
+            Function::builder()
+                .name("check")
+                .description("shadow the check callback")
+                .parameters("{}")
+                .build(),
+        )])
+        .build();
+    assert!(refused(check).await.contains("reserved tool name"));
+
     let bad_parameters = Request::builder()
         .messages(vec![user("hi")])
         .tools(vec![Tool::Function(
@@ -54,10 +66,4 @@ async fn scenario() {
     let unparseable_schema =
         Request::builder().messages(vec![user("hi")]).format(verdict("not json")).build();
     assert!(refused(unparseable_schema).await.contains("not valid JSON"));
-
-    let invalid_schema = Request::builder()
-        .messages(vec![user("hi")])
-        .format(verdict(r#"{"type":"nonsense"}"#))
-        .build();
-    assert!(refused(invalid_schema).await.contains("valid JSON Schema"));
 }

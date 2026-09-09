@@ -1,6 +1,6 @@
 # Model completion (canned)
 
-Proves the deterministic side of the `wasi-model` boundary: a guest calls `create` across the `omnia:model/completion` boundary and receives a **validated, deterministic** answer from an example-local canned backend — no live model, no network.
+Proves the deterministic side of the `wasi-model` boundary: a guest calls `create` across the `omnia:model/completion` boundary and receives a **deterministic** answer from an example-local canned backend — no live model, no network.
 
 ## What it shows
 
@@ -10,13 +10,13 @@ Proves the deterministic side of the `wasi-model` boundary: a guest calls `creat
 
 ```mermaid
 flowchart LR
-  guest["guest.run<br/>(imports completion)"] -->|"create(request)"| bind["create binding<br/>validation gate"]
+  guest["guest.run<br/>(imports completion)"] -->|"create(request)"| bind["create binding"]
   bind -->|"Request + ToolHost"| ctx["WasiModelCtx"]
   ctx --> canned["CannedVerdict<br/>fixed schema answer"]
-  canned -->|"validated answer"| guest
+  canned -->|"answer"| guest
 ```
 
-The runtime core stays generic (Law 2): no model id, provider, or schema dialect lives in Omnia. The boundary only ever hands the guest a **validated answer string**. The canned backend never calls tools; live tool-call paths are exercised by the `omnia-genai` backend in the `omnia-backends` repo.
+The runtime core stays generic (Law 2): no model id, provider, or schema dialect lives in Omnia, and nothing in the host validates the answer — the `format` steers the provider, and a guest that wants to judge candidates sets `request.check`. The boundary only ever hands the guest an **answer string**. The canned backend never calls tools or checks; live tool-call and check paths are exercised by the `omnia-genai` backend in the `omnia-backends` repo.
 
 ## Quick Start
 

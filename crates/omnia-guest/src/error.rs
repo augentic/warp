@@ -138,6 +138,18 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl From<crate::model::Error> for Error {
+    fn from(err: crate::model::Error) -> Self {
+        use crate::model::Error as Model;
+        match err {
+            // the guest's own request, or findings the model could not resolve
+            Model::InvalidRequest(_) | Model::BudgetExhausted(_) => crate::bad_request!(err),
+            // a tool, or the transport
+            Model::ToolFailed(_) | Model::Backend(_) => crate::bad_gateway!(err),
+        }
+    }
+}
+
 /// Create a new `BadRequest` error.
 #[macro_export]
 macro_rules! bad_request {

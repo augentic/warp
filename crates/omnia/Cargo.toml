@@ -55,7 +55,7 @@ gc = ["omnia-core/gc"]
 anyhow.workspace = true
 futures.workspace = true
 omnia-cli = { workspace = true, optional = true }
-omnia-core.workspace = true
+omnia-core = { workspace = true, features = ["wrpc"] }
 omnia-host-macros.workspace = true
 omnia-plugin = { workspace = true, optional = true }
 serde.workspace = true

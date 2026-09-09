@@ -36,7 +36,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use anyhow::Result;
 use futures::FutureExt as _;
 pub use selector::{FirstArgSelector, GuestSelector};
-pub use transport::{LinkClient, WrpcState};
 use wasmtime::Engine;
 use wasmtime::component::{Component, Linker};
 use wasmtime_wasi::WasiView;

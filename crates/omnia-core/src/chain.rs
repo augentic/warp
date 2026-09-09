@@ -28,6 +28,7 @@ pub struct ChainCtx {
 /// Run `fut` with the chain context carried over from an incoming dispatch, so
 /// nested host-mediated calls made while serving it count against the same
 /// chain and inherit its wall-clock policy.
+#[cfg(feature = "wrpc")]
 pub fn with_chain<F>(ctx: ChainCtx, fut: F) -> impl Future<Output = F::Output>
 where
     F: Future,

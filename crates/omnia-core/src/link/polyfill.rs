@@ -17,6 +17,7 @@ use wrpc_wasmtime::{ValEncoder, WrpcView, read_value};
 use super::decode::read_plain_value;
 use super::selector::GuestSelector;
 use super::transport::{InProcess, LinkTransport as _};
+use crate::LinkClient;
 use crate::chain::ChainPolicy;
 use crate::registry::GuestId;
 use crate::value::contains_resource;
@@ -161,7 +162,7 @@ struct Call<'a> {
     forwarded: std::borrow::Cow<'a, [Val]>,
     param_types: Vec<Type>,
     result_types: Vec<Type>,
-    client: super::transport::LinkClient,
+    client: LinkClient,
     // Whether this call's chain root runs uncapped (command mode): the
     // round-trip then skips the `guest_timeout` wall-clock bound.
     uncapped: bool,

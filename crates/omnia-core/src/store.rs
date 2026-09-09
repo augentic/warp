@@ -1,9 +1,13 @@
 //! Per-store context. [`StoreBase`] holds the state identical for every
-//! deployment (WASI table/context, memory limiter, wRPC view state, host→guest
-//! dispatcher); [`StoreCtx`] pairs it with the deployment's backend bundle `B`
-//! and implements the fixed `WasiView`/`WrpcView`/`HasLimits` views, plus the
-//! generic [`StoreView`] blanket every host's `add_to_linker` accessor rides
+//! deployment (WASI table/context, memory limiter, host→guest dispatcher, and
+//! — under the `wrpc` feature — wRPC view state); [`StoreCtx`] pairs it with
+//! the deployment's backend bundle `B` and implements the fixed
+//! `WasiView`/`WrpcView`/`HasLimits` views, plus the generic [`StoreView`]
+//! blanket every host's `add_to_linker` accessor rides
 //! (`StoreView<H> for StoreCtx<B> where B: Provides<H>`).
+
+#[cfg(feature = "wrpc")]
+mod wrpc;
 
 use std::sync::Arc;
 
@@ -11,11 +15,12 @@ use wasmtime::component::HasData;
 use wasmtime::{StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{FsPerms, ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtxView, WasiHttpView};
+#[cfg(feature = "wrpc")]
 use wrpc_wasmtime::{WrpcCtxView, WrpcView};
 
-use crate::{
-    Dispatcher, Extensions, HostCtx, LinkClient, MountRegistry, Provides, RuntimeOptions, WrpcState,
-};
+#[cfg(feature = "wrpc")]
+pub use self::wrpc::{LinkClient, WrpcState};
+use crate::{Dispatcher, Extensions, HostCtx, MountRegistry, Provides, RuntimeOptions};
 
 /// Exposes a store context's [`StoreLimits`] so the runtime can install a
 /// per-guest resource limiter on every [`Store`](wasmtime::Store) it creates.
@@ -66,7 +71,9 @@ pub struct StoreBase {
     /// [`Store`]: wasmtime::Store
     pub limits: StoreLimits,
     /// Per-store wRPC view state for host-mediated dynamic linking; inert
-    /// unless the deployment declares link interfaces (the manifest `plugins` list).
+    /// unless the deployment declares link interfaces (the manifest `plugins`
+    /// list). Present only under the `wrpc` feature.
+    #[cfg(feature = "wrpc")]
     pub wrpc: WrpcState,
     /// Type-erased host->guest dispatcher; a fresh handle to the owning
     /// runtime. Inert unless a host binding reaches for it.
@@ -129,6 +136,7 @@ impl StoreBase {
             table: ResourceTable::new(),
             wasi: wasi_builder.build(),
             limits: StoreLimitsBuilder::new().memory_size(config.options.max_memory_bytes).build(),
+            #[cfg(feature = "wrpc")]
             wrpc: WrpcState::new(),
             dispatcher: config.dispatcher,
             mounts,
@@ -166,6 +174,7 @@ impl<B: Send + 'static> WasiView for StoreCtx<B> {
     }
 }
 
+#[cfg(feature = "wrpc")]
 impl<B: Send + 'static> WrpcView for StoreCtx<B> {
     type Invoke = LinkClient;
 

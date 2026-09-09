@@ -22,10 +22,9 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use anyhow::{Result, bail};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf, split};
-use wasmtime::component::ResourceTable;
 use wrpc_transport::frame::{Oneshot, Server};
-use wrpc_wasmtime::{SharedResourceTable, WrpcCtx, WrpcCtxView};
 
+use crate::LinkClient;
 use crate::chain::ChainCtx;
 use crate::registry::GuestId;
 
@@ -37,16 +36,6 @@ const DUPLEX_BUF: usize = 1 << 16;
 /// context carries the caller's chain context (depth plus wall-clock policy)
 /// to the serve side.
 pub type InProcServer = Server<ChainCtx, ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
-
-/// The in-process wRPC client handle: a single stream pair to one target's
-/// server, used for exactly one invocation.
-pub type InProcClient = Oneshot<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
-
-/// The wRPC client handle type a guest store advertises to `wrpc-wasmtime`.
-///
-/// Re-exported for the `runtime!` macro's generated [`wrpc_wasmtime::WrpcView`]
-/// implementation; equal to the in-process carrier's client.
-pub type LinkClient = InProcClient;
 
 /// A bound wRPC transport. The dispatch path talks only to this — never to a
 /// concrete transport — so the same selector-driven dispatch runs co-located or
@@ -185,58 +174,8 @@ impl InProcess {
     }
 }
 
-/// Per-store wRPC view state.
-///
-/// `wrpc-wasmtime` requires each guest store to expose a [`WrpcCtx`] (a client
-/// handle plus a shared-resource table). Omnia's host-mediated dispatch reaches
-/// targets through the bound transport carrier, *not* through this client, so
-/// the client here is an inert single-use handle that is never invoked — it
-/// exists only to satisfy the trait bound and carry the shared-resource table.
-pub struct WrpcState {
-    client: InProcClient,
-    shared: SharedResourceTable,
-}
-
-impl WrpcState {
-    /// Create fresh per-store wRPC view state.
-    #[must_use]
-    pub fn new() -> Self {
-        // A dummy pipe whose server half is dropped immediately: this client is
-        // never invoked (dispatch uses the carrier), so it never reads or writes.
-        let (client, _server) = Oneshot::duplex(1);
-        Self {
-            client,
-            shared: SharedResourceTable::default(),
-        }
-    }
-
-    /// Borrow this state as a [`WrpcCtxView`] paired with the store's resource
-    /// table — the shape `wrpc-wasmtime`'s [`wrpc_wasmtime::WrpcView`] returns.
-    pub fn view<'a>(&'a mut self, table: &'a mut ResourceTable) -> WrpcCtxView<'a, InProcClient> {
-        WrpcCtxView { ctx: self, table }
-    }
-}
-
-impl Default for WrpcState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WrpcCtx<InProcClient> for WrpcState {
-    fn context(&self) {}
-
-    fn client(&self) -> &InProcClient {
-        &self.client
-    }
-
-    fn shared_resources(&mut self) -> &mut SharedResourceTable {
-        &mut self.shared
-    }
-}
-
 impl LinkTransport for InProcess {
-    type Client = InProcClient;
+    type Client = LinkClient;
 
     fn connect(&self, target: &GuestId, interface: &str, ctx: ChainCtx) -> Result<Self::Client> {
         let server = {

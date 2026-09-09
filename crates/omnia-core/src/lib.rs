@@ -8,6 +8,7 @@ mod digest;
 mod dispatch;
 mod extensions;
 mod host;
+#[cfg(feature = "wrpc")]
 mod link;
 mod location;
 mod mount;
@@ -21,6 +22,7 @@ mod value;
 
 #[doc(hidden)]
 pub use pastey;
+#[cfg(feature = "wrpc")]
 #[doc(hidden)]
 pub use wrpc_wasmtime::{WrpcCtxView, WrpcView};
 #[doc(hidden)]
@@ -35,7 +37,8 @@ pub use self::host::{
     Backend, FromEnv, FutureResult, HasTable, Host, HostCtx, NoOptions, Provides, Proxy, Server,
     get_cloned,
 };
-pub use self::link::{FirstArgSelector, GuestSelector, InProcessLinks, LinkClient, WrpcState};
+#[cfg(feature = "wrpc")]
+pub use self::link::{FirstArgSelector, GuestSelector, InProcessLinks};
 pub use self::location::Location;
 pub use self::mount::{MountRegistry, ResolvedPreopen};
 pub use self::options::RuntimeOptions;
@@ -48,6 +51,8 @@ pub use self::store::{
     HasDispatcher, HasExtensions, HasLimits, HasMounts, HttpBorrow, HttpCtx, StoreBase,
     StoreConfig, StoreCtx, StoreView,
 };
+#[cfg(feature = "wrpc")]
+pub use self::store::{LinkClient, WrpcState};
 pub use self::telemetry::{LogMode, Telemetry};
 
 /// Generates the standard host-error conversions every `omnia` WASI host

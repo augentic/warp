@@ -53,7 +53,7 @@ mod runtime {
     pub fn manifest() -> omnia::ManifestSource {
         omnia::ManifestSource::Inline(
             omnia::Manifest::new()
-                .plugins(["omnia:link/echo"])
+                .link(["omnia:link/echo"])
                 .guest(
                     omnia::GuestEntry::new(
                             "responder",

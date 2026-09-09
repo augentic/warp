@@ -31,7 +31,7 @@ mod runtime {
     pub fn manifest() -> omnia::ManifestSource {
         omnia::ManifestSource::Inline(
             omnia::Manifest::new()
-                .plugins(["emery:adapter/probe"])
+                .link(["emery:adapter/probe"])
                 .guest(omnia::GuestEntry::new("engine", "engine.wasm")),
         )
     }

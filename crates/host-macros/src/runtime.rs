@@ -257,7 +257,7 @@ mod tests {
     // Guest-owned routes and the deployment-wide plugins block: every trigger
     // list expands to `route_*` builder calls on the owning `GuestEntry` (the
     // guest id is the implicit target), the `plugins:` block's `interfaces:`
-    // list to `.plugins(...)` calls on the `Manifest` — and, with no
+    // list to `.link(...)` calls on the `Manifest` — and, with no
     // `locations:`, no loader host link — and patterns/interfaces are
     // arbitrary expressions.
     #[test]

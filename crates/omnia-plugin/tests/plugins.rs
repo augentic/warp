@@ -34,7 +34,7 @@ async fn requester_runtime(
     path: Option<Arc<dyn PathSource>>,
 ) -> Result<Runtime<Backends>> {
     let manifest = Manifest::new()
-        .plugins(["omnia-test:link/ops"])
+        .link(["omnia-test:link/ops"])
         .guest(GuestEntry::new("requester", wasm))
         .mounts([scratch.mount(false)]);
     let mut deployment = DeploymentBuilder::new()
@@ -168,7 +168,7 @@ fn locations_grammar_carries_manifest_data() {
     let _ = (locations_grammar::main, locations_grammar::run, locations_grammar::run_with::<()>);
     let manifest = locations_grammar::manifest().into_manifest().expect("inline source resolves");
     assert_eq!(
-        manifest.locations,
+        manifest.plugin.locations,
         [Location::path("adapters", "adapters"), Location::registry("ghcr.io"),]
     );
 }
@@ -329,7 +329,7 @@ async fn pinned_reload_refuses_after_external_reregistration() {
 async fn load_without_plugins_installed_refuses() {
     let scratch = scratch();
     let manifest = Manifest::new()
-        .plugins(["omnia-test:link/ops"])
+        .link(["omnia-test:link/ops"])
         .guest(GuestEntry::new("requester", test_programs::PLUGINS_LOAD_PATH))
         .mounts([scratch.mount(false)]);
     let mut deployment = DeploymentBuilder::new()

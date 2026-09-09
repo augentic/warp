@@ -87,7 +87,7 @@ fn emit_manifest(config: &Config) -> Option<TokenStream> {
 fn emit_manifest_builder(manifest: &ManifestSpec) -> TokenStream {
     let plugins = manifest.plugins.iter().map(|interface| {
         quote! {
-            .plugins([#interface])
+            .link([#interface])
         }
     });
 

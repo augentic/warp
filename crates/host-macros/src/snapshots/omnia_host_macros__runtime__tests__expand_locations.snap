@@ -57,7 +57,7 @@ mod runtime {
     pub fn manifest() -> omnia::ManifestSource {
         omnia::ManifestSource::Inline(
             omnia::Manifest::new()
-                .plugins(["emery:adapter/probe"])
+                .link(["emery:adapter/probe"])
                 .locations([omnia::Location::path(".", project_root())])
                 .locations([omnia::Location::registry("ghcr.io")])
                 .guest(omnia::GuestEntry::new("engine", "engine.wasm")),

@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 pub use manifest::{
-    GuestEntry, GuestRoutes, Manifest, Mount, SourceSpec, Transport, TransportKind,
+    GuestEntry, GuestRoutes, LinkConfig, Manifest, Mount, PluginConfig, SourceSpec, Transport,
+    TransportKind,
 };
 use omnia_core::wasmtime::component::Linker;
 use omnia_core::wasmtime::{Config, Engine};
@@ -204,7 +205,7 @@ impl DeploymentBuilder {
             mode: self.mode,
             allow_empty: self.allow_empty,
             command_guest: manifest.command_guest(),
-            locations: manifest.locations,
+            locations: manifest.plugin.locations,
         })
     }
 

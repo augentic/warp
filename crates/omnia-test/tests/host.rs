@@ -80,7 +80,7 @@ async fn path_root_rewrites_the_production_location() {
         .mount(scratch.mount(false))
         .path_root(scratch.path());
     assert_eq!(
-        deployment.manifest().expect("inline base resolves").locations,
+        deployment.manifest().expect("inline base resolves").plugin.locations,
         [Location::path(".", scratch.path())],
         "the overlay replaces the binary's `.` root rather than adding a second"
     );
@@ -164,7 +164,7 @@ async fn then_answers_past_the_script() {
 #[tokio::test]
 async fn link_pair_dispatches_through_the_booted_runtime() {
     let runtime = Deployment::new()
-        .plugins(["omnia-test:link/ops"])
+        .link(["omnia-test:link/ops"])
         .guest("echoer", test_programs::LINK_ECHOER)
         .guest("full", test_programs::LINK_FULL)
         .boot(Backends::defaults().await, |_| Ok(()))
@@ -183,7 +183,7 @@ async fn path_root_serves_plugin_loads() {
         .expect("staging the loadable echoer");
 
     let status = Deployment::new()
-        .plugins(["omnia-test:link/ops"])
+        .link(["omnia-test:link/ops"])
         .guest("requester", test_programs::PLUGINS_LOAD_PATH)
         .mount(scratch.mount(false))
         .path_root(scratch.path())

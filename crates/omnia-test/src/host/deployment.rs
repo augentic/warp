@@ -9,8 +9,9 @@ use omnia::{
 };
 use omnia_wasi_otel::WasiOtel;
 
-/// One command-mode deployment: guests, mounts, arguments, the plugin seams
-/// the host mediates, and the directory the `.` path location serves.
+/// One command-mode deployment: guests, mounts, arguments, the link
+/// interfaces the host mediates, plugin locations, and the directory the `.`
+/// path location serves.
 ///
 /// Built from nothing, or as an overlay on the manifest a production
 /// `runtime!` compiled in (`Deployment::from(runtime::manifest())`): the
@@ -27,7 +28,7 @@ use omnia_wasi_otel::WasiOtel;
 /// let scratch = scratch();
 /// std::fs::copy(plugin, scratch.path().join("plugin.wasm"))?;
 /// let status = Deployment::new()
-///     .plugins(["acme:tools/ops"])
+///     .link(["acme:tools/ops"])
 ///     .guest("requester", requester)
 ///     .mount(scratch.mount(false))
 ///     .path_root(scratch.path())
@@ -44,7 +45,8 @@ pub struct Deployment {
     command: Option<String>,
     mounts: Vec<Mount>,
     args: Vec<String>,
-    plugins: Vec<String>,
+    link: Vec<String>,
+    locations: Vec<Location>,
     path_root: Option<PathBuf>,
 }
 
@@ -100,11 +102,17 @@ impl Deployment {
         self
     }
 
-    /// Interfaces the host mediates between guests; the `omnia:plugins`
-    /// loader host is linked whenever any are declared.
+    /// Interfaces the host mediates between guests.
     #[must_use]
-    pub fn plugins<S: Into<String>>(mut self, interfaces: impl IntoIterator<Item = S>) -> Self {
-        self.plugins.extend(interfaces.into_iter().map(Into::into));
+    pub fn link<S: Into<String>>(mut self, interfaces: impl IntoIterator<Item = S>) -> Self {
+        self.link.extend(interfaces.into_iter().map(Into::into));
+        self
+    }
+
+    /// Plugin acquisition locations (`[[plugin.location]]`).
+    #[must_use]
+    pub fn locations(mut self, locations: impl IntoIterator<Item = Location>) -> Self {
+        self.locations.extend(locations);
         self
     }
 
@@ -126,7 +134,8 @@ impl Deployment {
         let mut manifest = base
             .unwrap_or_default()
             .mounts(self.mounts.iter().cloned())
-            .plugins(self.plugins.iter().cloned());
+            .link(self.link.iter().cloned())
+            .locations(self.locations.iter().cloned());
         for guest in &self.guests {
             manifest = manifest.guest(guest.clone());
         }
@@ -136,13 +145,13 @@ impl Deployment {
             }
         }
         if let Some(root) = &self.path_root {
-            let dot = manifest.locations.iter_mut().find_map(|location| match location {
+            let dot = manifest.plugin.locations.iter_mut().find_map(|location| match location {
                 Location::Path { name, path } if name == "." => Some(path),
                 _ => None,
             });
             match dot {
                 Some(path) => path.clone_from(root),
-                None => manifest.locations.push(Location::path(".", root.clone())),
+                None => manifest.plugin.locations.push(Location::path(".", root.clone())),
             }
         }
         Ok(manifest)
@@ -156,8 +165,8 @@ impl Deployment {
     }
 
     /// Assembles the runtime by hand: builds the deployment, links the
-    /// plugin host when seams or locations are declared and the caller's
-    /// hosts through `link`, installs the declared locations, and wires the
+    /// plugin host when locations are declared and the caller's hosts
+    /// through `link`, installs the declared locations, and wires the
     /// link serve side.
     ///
     /// # Errors
@@ -171,7 +180,7 @@ impl Deployment {
         B: Clone + Send + Sync + 'static,
     {
         let manifest = self.manifest()?;
-        let plugins = !manifest.plugins.is_empty() || !manifest.locations.is_empty();
+        let link_loader = !manifest.plugin.locations.is_empty();
         let mut deployment = DeploymentBuilder::new()
             .manifest(manifest)
             .mode(Mode::Command)
@@ -179,7 +188,7 @@ impl Deployment {
             .build::<StoreCtx<B>>()
             .await
             .context("building deployment")?;
-        if plugins {
+        if link_loader {
             deployment.host::<WasiPlugins, B>().context("linking the plugins host")?;
         }
         link(&mut deployment).context("linking hosts")?;

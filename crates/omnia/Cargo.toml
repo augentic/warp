@@ -31,6 +31,12 @@ cli = ["dep:omnia-cli"]
 # deployments are interfaces-only and never link the loader.
 plugin = ["dep:omnia-plugin"]
 
+# Enables host-mediated guest→guest linking: the `omnia-link` crate and the
+# `omnia-core` wRPC store view. A deployment whose manifest names link
+# interfaces requires it; without it, `Manifest::validate` refuses a non-empty
+# interface list.
+link = ["dep:omnia-link", "omnia-core/wrpc"]
+
 # Enables just-in-time wasm to machine code compilation.
 jit = ["omnia-core/jit", "omnia-cli?/jit"]
 
@@ -55,9 +61,9 @@ gc = ["omnia-core/gc"]
 anyhow.workspace = true
 futures.workspace = true
 omnia-cli = { workspace = true, optional = true }
-omnia-core = { workspace = true, features = ["wrpc"] }
+omnia-core.workspace = true
 omnia-host-macros.workspace = true
-omnia-link.workspace = true
+omnia-link = { workspace = true, optional = true }
 omnia-plugin = { workspace = true, optional = true }
 serde.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
@@ -68,3 +74,7 @@ wasmtime = { workspace = true, features = ["runtime"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 test-programs.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[[test]]
+name = "link"
+required-features = ["link"]

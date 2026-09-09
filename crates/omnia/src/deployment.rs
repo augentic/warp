@@ -3,6 +3,7 @@
 mod manifest;
 mod source;
 
+#[cfg(feature = "link")]
 use std::collections::BTreeSet;
 use std::env;
 use std::sync::Arc;
@@ -15,10 +16,13 @@ pub use manifest::{
 use omnia_core::wasmtime::component::Linker;
 use omnia_core::wasmtime::{Config, Engine};
 use omnia_core::wasmtime_wasi::WasiView;
+#[cfg(feature = "link")]
+use omnia_core::{ChainPolicy, WrpcView};
 use omnia_core::{
-    ChainPolicy, GuestId, Host, LinkSeam, LoadedGuest, Location, LogMode, MountRegistry, NoLinks,
-    Registry, Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreCtx, Telemetry, WrpcView,
+    GuestId, Host, LinkSeam, LoadedGuest, Location, LogMode, MountRegistry, NoLinks, Registry,
+    Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreCtx, Telemetry,
 };
+#[cfg(feature = "link")]
 use omnia_link::{FirstArgSelector, GuestSelector, InProcessLinks};
 use source::ArtifactPolicy;
 
@@ -191,7 +195,9 @@ impl DeploymentBuilder {
             options,
             guests,
             routes: manifest.routes(),
+            #[cfg(feature = "link")]
             links: manifest.link_interfaces(),
+            #[cfg(feature = "link")]
             selector: Arc::new(FirstArgSelector),
             mounts,
             args: Arc::new(args),
@@ -254,8 +260,10 @@ pub struct Deployment<T: WasiView + 'static> {
     guests: Vec<LoadedGuest>,
     routes: Routes,
     // Guest links — the host-mediated interfaces.
+    #[cfg(feature = "link")]
     links: BTreeSet<Box<str>>,
     // Host-mediated dispatch selector.
+    #[cfg(feature = "link")]
     selector: Arc<dyn GuestSelector>,
     // Mount registry opened from the manifest's resolved preopens.
     mounts: Arc<MountRegistry>,
@@ -272,6 +280,20 @@ pub struct Deployment<T: WasiView + 'static> {
     // for the loader capability to install against.
     locations: Vec<Location>,
 }
+
+/// Store bound that carries wRPC only when the `link` feature is enabled.
+#[cfg(feature = "link")]
+pub trait LinkStore: WasiView + WrpcView + 'static {}
+
+/// Store bound that carries wRPC only when the `link` feature is enabled.
+#[cfg(not(feature = "link"))]
+pub trait LinkStore: WasiView + 'static {}
+
+#[cfg(feature = "link")]
+impl<T: WasiView + WrpcView + 'static> LinkStore for T {}
+
+#[cfg(not(feature = "link"))]
+impl<T: WasiView + 'static> LinkStore for T {}
 
 impl<T: WasiView> Deployment<T> {
     /// Link a WASI host's interfaces into the shared Linker.
@@ -291,6 +313,7 @@ impl<T: WasiView> Deployment<T> {
     ///
     /// Defaults to [`FirstArgSelector`] — the runtime core's "first call argument is the
     /// identity" strategy. Chainable.
+    #[cfg(feature = "link")]
     pub fn selector(&mut self, selector: impl GuestSelector) -> &mut Self {
         self.selector = Arc::new(selector);
         self
@@ -339,9 +362,9 @@ impl<T: WasiView> Deployment<T> {
     /// component cannot be pre-instantiated, or the registry cannot be assembled.
     pub fn into_registry(self) -> Result<Registry<T>>
     where
-        // `InProcessLinks` serves over wRPC, which needs the store's wRPC view.
-        T: WrpcView,
+        T: LinkStore,
     {
+        #[cfg(feature = "link")]
         let seam: Arc<dyn LinkSeam<T>> = if self.links.is_empty() {
             Arc::new(NoLinks)
         } else {
@@ -351,6 +374,8 @@ impl<T: WasiView> Deployment<T> {
                 ChainPolicy::from(&self.options),
             ))
         };
+        #[cfg(not(feature = "link"))]
+        let seam: Arc<dyn LinkSeam<T>> = Arc::new(NoLinks);
 
         Registry::assemble(
             self.engine,

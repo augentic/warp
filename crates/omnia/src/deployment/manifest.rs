@@ -176,6 +176,14 @@ impl Manifest {
                  [\"plugin\"]`)"
             );
         }
+        #[cfg(not(feature = "link"))]
+        if !self.plugins.is_empty() {
+            bail!(
+                "this runtime was built without the `link` feature; remove the plugins \
+                 interfaces or enable the feature on the `omnia` dependency (`features = \
+                 [\"link\"]`)"
+            );
+        }
         Ok(())
     }
 
@@ -665,6 +673,19 @@ mod tests {
     }
 
     #[test]
+    fn interfaces_without_link_feature() {
+        let manifest =
+            Manifest::new().guest(GuestEntry::new("a", "./a.wasm")).plugins(["omnia:link/echo"]);
+        #[cfg(feature = "link")]
+        manifest.validate(false).expect("interfaces are allowed with the link feature");
+        #[cfg(not(feature = "link"))]
+        {
+            let error = manifest.validate(false).expect_err("interfaces need the link feature");
+            assert!(error.to_string().contains("without the `link` feature"), "{error}");
+        }
+    }
+
+    #[test]
     fn reject_mixed_location_keys() {
         let toml = "[[guest]]\nid = \"a\"\nsource.path = \"./a.wasm\"\n\n\
              [[location]]\nname = \".\"\npath = \"adapters\"\nregistry = \"ghcr.io\"\n";
@@ -815,6 +836,7 @@ mod tests {
             .plugins(["omnia:link/echo"])
             .plugins(["omnia:shared/log"]);
 
+        #[cfg(feature = "link")]
         manifest.validate(false).expect("manifest should validate");
         assert_eq!(manifest.guests.len(), 2);
         assert_eq!(manifest.mounts.len(), 1);

@@ -12,17 +12,15 @@
 //! Acceptance of an answer is the guest's: a request with [`Request::check`]
 //! set receives each candidate as a tool call named `check` and answers
 //! `Ok` to finish or `Err(correction)` to send the model round again. The
-//! typed [`Question`] (feature `schema`) runs that exchange for a
-//! `JsonSchema + Deserialize` answer type.
+//! typed [`Question`] runs that exchange for a `JsonSchema + Deserialize`
+//! answer type.
 
-#[cfg(feature = "schema")]
 mod question;
 
 use std::future::Future;
 
 use serde::de::DeserializeOwned;
 
-#[cfg(feature = "schema")]
 pub use self::question::{Findings, Question, ToolFuture, Tools};
 
 /// The reserved tool name a `check` candidate arrives under.

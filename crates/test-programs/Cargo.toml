@@ -15,9 +15,10 @@ autoexamples = false
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 clap.workspace = true
 futures.workspace = true
-omnia-guest = { workspace = true, features = ["command", "schema"] }
+omnia-guest = { workspace = true, features = ["command"] }
 omnia-wasi-model.workspace = true
 omnia-wasi-otel.workspace = true
+schemars.workspace = true
 serde.workspace = true
 tracing.workspace = true
 wasip3.workspace = true
@@ -71,6 +72,11 @@ crate-type = ["cdylib"]
 [[example]]
 name = "model_check_mismatch"
 path = "programs/model/check_mismatch.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "model_check_oversize"
+path = "programs/model/check_oversize.rs"
 crate-type = ["cdylib"]
 
 [[example]]

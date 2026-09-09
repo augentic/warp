@@ -15,8 +15,9 @@ pub trait ToolHost: Debug + Send + Sync {
     /// Ask the guest whether `candidate` is the answer. `Ok(())` finishes
     /// the completion; `Err(text)` is the correction turn the backend appends
     /// verbatim. Routed over the session's `calls` stream as the reserved
-    /// tool `check`; `tool_timeout` applies, the tool-call budget does not.
-    /// The outer error is a hard host failure (closed session, timeout).
+    /// tool `check`; `tool_timeout` applies and `max_result_bytes` caps the
+    /// correction, the tool-call budget does not apply. The outer error is a
+    /// hard host failure (closed session, timeout, oversize correction).
     fn check(&self, candidate: String) -> FutureResult<Result<(), String>>;
 
     /// Bounded workspace read via the lent `wasi:filesystem` capability.

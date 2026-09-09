@@ -271,6 +271,18 @@ async fn model_check_mismatch() {
 }
 
 #[tokio::test]
+async fn model_check_oversize() {
+    // The guest's correction is model-bound text: the result cap applies to
+    // it as to a tool result, and the breach fails the completion hard.
+    let model = ScriptedModel::answering([FAIL]).limits(Limits {
+        max_result_bytes: 4,
+        ..Limits::default()
+    });
+    let model = run_scripted(test_programs::MODEL_CHECK_OVERSIZE, vec![], model).await;
+    assert!(model.exchanges().is_empty(), "the oversize correction fails hard");
+}
+
+#[tokio::test]
 async fn model_check_plain() {
     let model = ScriptedModel::answering(["nope", "hi"]);
     let model = run_scripted(test_programs::MODEL_CHECK_PLAIN, vec![], model).await;

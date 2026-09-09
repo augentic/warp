@@ -3,12 +3,15 @@
 //! The request's `format` is `T`'s JSON Schema — a steering hint for the
 //! provider — and acceptance is the request's `check`, answered here: each
 //! candidate is deserialized into `T` and handed to the caller's closure;
-//! a miss becomes the correction turn, a hit is captured and returned. The
-//! reply text is never re-parsed.
+//! a miss becomes the correction turn (one default template, replaceable
+//! per question), a hit is captured and returned. The reply text is never
+//! re-parsed.
 
+use std::fmt;
 use std::future::{Future, ready};
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -30,11 +33,31 @@ pub type ToolFuture = Pin<Box<dyn Future<Output = Result<String, String>> + Send
 /// [`Question::ask`] answers the reserved `check` in front of it.
 pub type Tools = Box<dyn FnMut(ToolCall) -> ToolFuture + Send>;
 
+/// Renders the correction turn for a rejected candidate from the previous
+/// answer and the findings against it.
+pub type Correction = Arc<dyn Fn(&str, &[String]) -> String + Send + Sync>;
+
 /// A question whose answer is one `T`.
-#[derive(Clone, Debug)]
 pub struct Question<T> {
     request: Request,
+    correction: Correction,
     answer: PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for Question<T> {
+    fn clone(&self) -> Self {
+        Self {
+            request: self.request.clone(),
+            correction: Arc::clone(&self.correction),
+            answer: PhantomData,
+        }
+    }
+}
+
+impl<T> fmt::Debug for Question<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Question").field("request", &self.request).finish_non_exhaustive()
+    }
 }
 
 impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
@@ -47,6 +70,7 @@ impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
                 check: true,
                 ..Request::default()
             },
+            correction: Arc::new(default_correction),
             answer: PhantomData,
         }
     }
@@ -99,6 +123,19 @@ impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
         self
     }
 
+    /// Replace the correction turn's template: `render(previous, findings)`
+    /// is the user message a rejected candidate earns, `previous` being the
+    /// candidate text and `findings` what the check held against it (or the
+    /// one deserialization failure). The default is a `## Previous answer
+    /// (rejected)` / `## Findings` template.
+    #[must_use]
+    pub fn correction(
+        mut self, render: impl Fn(&str, &[String]) -> String + Send + Sync + 'static,
+    ) -> Self {
+        self.correction = Arc::new(render);
+        self
+    }
+
     /// The request as built so far.
     #[must_use]
     pub const fn request(&self) -> &Request {
@@ -117,7 +154,8 @@ impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
     ///   disagree, which more rounds will not fix.
     /// - `BudgetExhausted(correction)` when the backend ran out of rounds on
     ///   a rejected candidate.
-    /// - `Backend` when the backend finished without running the check.
+    /// - `Backend` when the backend finished with no accepted answer: it
+    ///   never ran the check, or returned after a rejection.
     /// - Any other host error, unchanged.
     pub async fn ask<M: Model>(
         &self, model: &M, turn: impl Into<String>, tools: Option<Tools>,
@@ -131,7 +169,9 @@ impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
 
         let mut accepted: Option<T> = None;
         let mut mismatch: Option<String> = None;
+        let mut candidates = 0_usize;
         let mut tools = tools;
+        let correction = &self.correction;
         let handler = |call: ToolCall| -> ToolFuture {
             if call.name != CHECK_TOOL {
                 return match tools.as_mut() {
@@ -142,6 +182,7 @@ impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
                     )))),
                 };
             }
+            candidates += 1;
             let result = match serde_json::from_str::<T>(&call.arguments) {
                 Err(error) => {
                     let finding = format!("the answer does not match the expected shape: {error}");
@@ -162,9 +203,12 @@ impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
         let outcome = model.complete_with(request, handler).await;
         match (outcome, accepted, mismatch) {
             (Ok(_), Some(answer), _) => Ok(answer),
-            (Ok(_), None, _) => {
+            (Ok(_), None, _) if candidates == 0 => {
                 Err(Error::Backend("the backend finished without running the check".to_owned()))
             }
+            (Ok(_), None, _) => Err(Error::Backend(
+                "the backend finished on a candidate the check rejected".to_owned(),
+            )),
             // A candidate serde rejected means the schema and `T` disagree:
             // a guest bug more rounds would not have fixed.
             (Err(Error::BudgetExhausted(_)), None, Some(mismatch)) => {
@@ -175,8 +219,8 @@ impl<T: JsonSchema + DeserializeOwned + Send> Question<T> {
     }
 }
 
-// The correction turn for a rejected candidate.
-fn correction(previous: &str, findings: &[String]) -> String {
+// The default correction turn for a rejected candidate.
+fn default_correction(previous: &str, findings: &[String]) -> String {
     format!(
         "## Previous answer (rejected)\n\n{previous}\n\n## Findings\n\n{}\n\nProduce a corrected, \
          complete answer that resolves every finding.",
@@ -217,7 +261,7 @@ mod tests {
     use serde::Deserialize;
     use serde_json::{Value, json};
 
-    use super::{Question, correction};
+    use super::{Question, default_correction};
     use crate::model::{Format, Function, SchemaFormat, ToolCall};
 
     #[derive(Debug, Deserialize, JsonSchema)]
@@ -268,7 +312,8 @@ mod tests {
 
     #[test]
     fn correction_template() {
-        let text = correction("{}", &["missing verdict".to_owned(), "too short".to_owned()]);
+        let text =
+            default_correction("{}", &["missing verdict".to_owned(), "too short".to_owned()]);
         assert!(text.starts_with("## Previous answer (rejected)\n\n{}\n\n## Findings\n\n"));
         assert!(text.contains("missing verdict\ntoo short"), "{text}");
     }

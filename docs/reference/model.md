@@ -61,7 +61,7 @@ When `check` is set, the backend does not finish on the model's final text. It o
 | `ok(_)` | The candidate is the reply; the completion ends. |
 | `err(text)` | The backend appends `text` verbatim as the next user turn (after the rejected candidate as an assistant turn) and goes round again. |
 
-The check rides the same streams as function tools but outside their budget: it never counts against `max-tool-calls` and needs no declaration in `tools`. The per-call timeout does apply. A backend that runs out of rounds on a rejection fails the completion with `budget-exhausted` whose detail is the last correction. Guests using `omnia-guest` reach this through `Request::check` and a `complete_with` handler matching `call.name == "check"`, or — with the `schema` feature — through `model::Question<T>`, which derives the steering schema from `T`, deserializes each candidate, runs the guest's closure, and returns the accepted `T`.
+The check rides the same streams as function tools but outside their budget: it never counts against `max-tool-calls` and needs no declaration in `tools`. The per-call timeout does apply, and the per-result size cap bounds the correction text (`tool-failed` when exceeded). A backend that runs out of rounds on a rejection fails the completion with `budget-exhausted` whose detail is the last correction. Guests using `omnia-guest` reach this through `Request::check` and a `complete_with` handler matching `call.name == "check"`, or through `model::Question<T>`, which derives the steering schema from `T`, deserializes each candidate, runs the guest's closure, and returns the accepted `T`.
 
 ### `generation`
 

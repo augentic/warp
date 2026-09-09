@@ -17,7 +17,7 @@ use wasmtime::component::{Type, Val};
 /// Decode one plain (resource-free) value of type [`Type`] from `r` into `val`.
 // One arm per `Type` variant, mirroring `wrpc_wasmtime::read_value`.
 #[allow(clippy::too_many_lines)]
-pub(super) async fn read_plain_value<R>(r: &mut R, val: &mut Val, ty: &Type) -> Result<()>
+pub async fn read_plain_value<R>(r: &mut R, val: &mut Val, ty: &Type) -> Result<()>
 where
     R: AsyncRead + Unpin,
 {
@@ -216,5 +216,156 @@ where
         Type::FixedLengthList(..) => {
             Err(Error::new(ErrorKind::Unsupported, "`fixed-length-list` type not supported"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use tokio::io::AsyncWriteExt as _;
+    use wasm_tokio::cm::AsyncWriteValue as _;
+    use wasm_tokio::{AsyncWriteCore as _, AsyncWriteLeb128 as _, AsyncWriteUtf8 as _};
+    use wasmtime::component::types::ComponentItem;
+    use wasmtime::component::{Component, Type, Val};
+    use wasmtime::{Config, Engine};
+
+    use super::read_plain_value;
+
+    async fn encode(buf: &mut Vec<u8>, val: &Val) {
+        match val {
+            Val::Bool(v) => buf.write_bool(*v).await.unwrap(),
+            Val::S8(v) => buf.write_i8(*v).await.unwrap(),
+            Val::U8(v) => buf.write_u8(*v).await.unwrap(),
+            Val::S16(v) => buf.write_i16_leb128(*v).await.unwrap(),
+            Val::U16(v) => buf.write_u16_leb128(*v).await.unwrap(),
+            Val::S32(v) => buf.write_i32_leb128(*v).await.unwrap(),
+            Val::U32(v) => buf.write_u32_leb128(*v).await.unwrap(),
+            Val::S64(v) => buf.write_i64_leb128(*v).await.unwrap(),
+            Val::U64(v) => buf.write_u64_leb128(*v).await.unwrap(),
+            Val::Float32(v) => buf.write_f32_le(*v).await.unwrap(),
+            Val::Float64(v) => buf.write_f64_le(*v).await.unwrap(),
+            Val::Char(v) => buf.write_char_utf8(*v).await.unwrap(),
+            Val::String(s) => buf.write_core_name(s).await.unwrap(),
+            Val::List(vs) => {
+                buf.write_u32_leb128(u32::try_from(vs.len()).unwrap()).await.unwrap();
+                for v in vs {
+                    Box::pin(encode(buf, v)).await;
+                }
+            }
+            Val::Record(fields) => {
+                for (_, v) in fields {
+                    Box::pin(encode(buf, v)).await;
+                }
+            }
+            Val::Option(None) => buf.write_option_status::<()>(None).await.unwrap(),
+            Val::Option(Some(v)) => {
+                buf.write_option_status(Some(())).await.unwrap();
+                Box::pin(encode(buf, v)).await;
+            }
+            Val::Result(Ok(payload)) => {
+                buf.write_result_status::<(), ()>(Ok(())).await.unwrap();
+                if let Some(v) = payload {
+                    Box::pin(encode(buf, v)).await;
+                }
+            }
+            Val::Result(Err(payload)) => {
+                buf.write_result_status::<(), ()>(Err(())).await.unwrap();
+                if let Some(v) = payload {
+                    Box::pin(encode(buf, v)).await;
+                }
+            }
+            other => panic!("encode does not cover {other:?}"),
+        }
+    }
+
+    async fn round_trip(ty: &Type, val: Val) -> Val {
+        let mut buf = Vec::new();
+        encode(&mut buf, &val).await;
+        let mut out = Val::Bool(false);
+        read_plain_value(&mut Cursor::new(buf), &mut out, ty).await.expect("decode");
+        out
+    }
+
+    fn composite_types() -> (Type, Type, Type, Type) {
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        let engine = Engine::new(&config).expect("engine");
+        let component = Component::new(
+            &engine,
+            r#"
+            (component
+              (type $list (list u32))
+              (type $rec (record (field "n" u32) (field "s" string)))
+              (type $opt (option u32))
+              (type $res (result u32 (error string)))
+              (export "list" (type $list))
+              (export "record" (type $rec))
+              (export "option" (type $opt))
+              (export "result" (type $res))
+            )
+            "#,
+        )
+        .expect("type-only component");
+        let ty = component.component_type();
+        let grab = |name: &str| match ty.get_export(&engine, name).expect(name).ty {
+            ComponentItem::Type(item) => item,
+            other => panic!("{name} export is {other:?}"),
+        };
+        (grab("list"), grab("record"), grab("option"), grab("result"))
+    }
+
+    #[tokio::test]
+    async fn scalars() {
+        for (ty, val) in [
+            (Type::Bool, Val::Bool(true)),
+            (Type::S8, Val::S8(-8)),
+            (Type::U8, Val::U8(8)),
+            (Type::S16, Val::S16(-16)),
+            (Type::U16, Val::U16(16)),
+            (Type::S32, Val::S32(-32)),
+            (Type::U32, Val::U32(32)),
+            (Type::S64, Val::S64(-64)),
+            (Type::U64, Val::U64(64)),
+            (Type::Float32, Val::Float32(1.5)),
+            (Type::Float64, Val::Float64(-2.5)),
+            (Type::Char, Val::Char('Ω')),
+            (Type::String, Val::String("hello".into())),
+        ] {
+            assert_eq!(round_trip(&ty, val.clone()).await, val);
+        }
+    }
+
+    #[tokio::test]
+    async fn lists() {
+        let (list, _, _, _) = composite_types();
+        let val = Val::List(vec![Val::U32(1), Val::U32(2), Val::U32(3)]);
+        assert_eq!(round_trip(&list, val.clone()).await, val);
+        assert_eq!(round_trip(&list, Val::List(Vec::new())).await, Val::List(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn records() {
+        let (_, record, _, _) = composite_types();
+        let val =
+            Val::Record(vec![("n".into(), Val::U32(7)), ("s".into(), Val::String("ok".into()))]);
+        assert_eq!(round_trip(&record, val.clone()).await, val);
+    }
+
+    #[tokio::test]
+    async fn options() {
+        let (_, _, option, _) = composite_types();
+        let some = Val::Option(Some(Box::new(Val::U32(9))));
+        assert_eq!(round_trip(&option, some.clone()).await, some);
+        assert_eq!(round_trip(&option, Val::Option(None)).await, Val::Option(None));
+    }
+
+    #[tokio::test]
+    async fn results() {
+        let (_, _, _, result) = composite_types();
+        let ok = Val::Result(Ok(Some(Box::new(Val::U32(1)))));
+        let err = Val::Result(Err(Some(Box::new(Val::String("no".into())))));
+        assert_eq!(round_trip(&result, ok.clone()).await, ok);
+        assert_eq!(round_trip(&result, err.clone()).await, err);
     }
 }

@@ -8,8 +8,6 @@ mod digest;
 mod dispatch;
 mod extensions;
 mod host;
-#[cfg(feature = "wrpc")]
-mod link;
 mod location;
 mod mount;
 mod options;
@@ -29,7 +27,9 @@ pub use wrpc_wasmtime::{WrpcCtxView, WrpcView};
 pub use {anyhow, futures, tokio, wasmtime, wasmtime_wasi};
 
 pub use self::artifact::{ELF_MAGIC, GuestArtifact, LoadedGuest, is_precompiled};
-pub use self::chain::{ChainPolicy, as_command_chain};
+#[cfg(feature = "wrpc")]
+pub use self::chain::with_chain;
+pub use self::chain::{ChainCtx, ChainPolicy, as_command_chain};
 pub use self::digest::sha256_digest;
 pub use self::dispatch::Dispatcher;
 pub use self::extensions::Extensions;
@@ -37,8 +37,6 @@ pub use self::host::{
     Backend, FromEnv, FutureResult, HasTable, Host, HostCtx, NoOptions, Provides, Proxy, Server,
     get_cloned,
 };
-#[cfg(feature = "wrpc")]
-pub use self::link::{FirstArgSelector, GuestSelector, InProcessLinks};
 pub use self::location::Location;
 pub use self::mount::{MountRegistry, ResolvedPreopen};
 pub use self::options::RuntimeOptions;
@@ -54,6 +52,7 @@ pub use self::store::{
 #[cfg(feature = "wrpc")]
 pub use self::store::{LinkClient, WrpcState};
 pub use self::telemetry::{LogMode, Telemetry};
+pub use self::value::contains_resource;
 
 /// Generates the standard host-error conversions every `omnia` WASI host
 /// crate repeats.

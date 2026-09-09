@@ -1,0 +1,34 @@
+[package]
+name = "omnia-link"
+description = "In-process guest→guest linking for the omnia WebAssembly component runtime"
+readme = "README.md"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+futures.workspace = true
+omnia-core = { workspace = true, features = ["wrpc"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["codec"] }
+tracing.workspace = true
+wasm-tokio.workspace = true
+wasmtime = { workspace = true, features = ["runtime"] }
+wasmtime-wasi.workspace = true
+wrpc-transport.workspace = true
+wrpc-wasmtime.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
+wasmtime = { workspace = true, features = ["cranelift", "wat"] }

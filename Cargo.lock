@@ -2369,6 +2369,7 @@ dependencies = [
  "omnia-cli",
  "omnia-core",
  "omnia-host-macros",
+ "omnia-link",
  "omnia-plugin",
  "serde",
  "test-programs",
@@ -2391,7 +2392,6 @@ name = "omnia-core"
 version = "0.36.0"
 dependencies = [
  "anyhow",
- "bytes",
  "cap-fs-ext",
  "cap-std",
  "cfg-if",
@@ -2405,11 +2405,9 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "tokio",
- "tokio-util",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "wasm-tokio",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -2476,6 +2474,24 @@ dependencies = [
  "quote",
  "syn 3.0.4",
  "trybuild",
+]
+
+[[package]]
+name = "omnia-link"
+version = "0.36.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "omnia-core",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wasm-tokio",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wrpc-transport",
+ "wrpc-wasmtime",
 ]
 
 [[package]]
@@ -4949,6 +4965,7 @@ dependencies = [
  "wasmtime-internal-jit-icache-coherence",
  "wasmtime-internal-unwinder",
  "wasmtime-internal-versioned-export-macros",
+ "wat",
  "windows-sys 0.61.2",
 ]
 

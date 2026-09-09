@@ -16,10 +16,10 @@ use omnia_core::wasmtime::component::Linker;
 use omnia_core::wasmtime::{Config, Engine};
 use omnia_core::wasmtime_wasi::WasiView;
 use omnia_core::{
-    ChainPolicy, FirstArgSelector, GuestId, GuestSelector, Host, InProcessLinks, LinkSeam,
-    LoadedGuest, Location, LogMode, MountRegistry, NoLinks, Registry, Routes, Runtime,
-    RuntimeOptions, RuntimeParts, Server, StoreCtx, Telemetry, WrpcView,
+    ChainPolicy, GuestId, Host, LinkSeam, LoadedGuest, Location, LogMode, MountRegistry, NoLinks,
+    Registry, Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreCtx, Telemetry, WrpcView,
 };
+use omnia_link::{FirstArgSelector, GuestSelector, InProcessLinks};
 use source::ArtifactPolicy;
 
 use crate::Mode;

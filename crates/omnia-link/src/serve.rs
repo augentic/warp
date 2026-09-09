@@ -6,14 +6,12 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use futures::StreamExt as _;
+use omnia_core::{GuestId, StoreFactory, with_chain};
 use wasmtime::component::{InstancePre, types};
 use wasmtime_wasi::WasiView;
 use wrpc_wasmtime::{ServeExt as _, WrpcView};
 
 use super::transport::{Endpoint, InProcess};
-use crate::chain::with_chain;
-use crate::registry::GuestId;
-use crate::seam::StoreFactory;
 
 /// wRPC host-resource map shape (empty for the resource-free dynamic path).
 type HostResources = HashMap<
@@ -35,7 +33,7 @@ type HostResources = HashMap<
 ///
 /// Returns an error if an export cannot be served over the carrier, or the
 /// guest already has a pending endpoint.
-pub(super) async fn serve_guest<T>(
+pub async fn serve_guest<T>(
     transport: &InProcess, interfaces: &BTreeSet<Box<str>>, factory: StoreFactory<T>, id: &GuestId,
     instance_pre: InstancePre<T>,
 ) -> Result<()>

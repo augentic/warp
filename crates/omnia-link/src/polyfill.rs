@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail, ensure};
 use bytes::BytesMut;
+use omnia_core::{ChainPolicy, GuestId, LinkClient, contains_resource};
 use tokio_util::codec::Encoder as _;
 use wasmtime::component::{Accessor, Linker, Type, Val, types};
 use wasmtime::{AsContextMut as _, Engine, StoreContextMut};
@@ -17,10 +18,6 @@ use wrpc_wasmtime::{ValEncoder, WrpcView, read_value};
 use super::decode::read_plain_value;
 use super::selector::GuestSelector;
 use super::transport::{InProcess, LinkTransport as _};
-use crate::LinkClient;
-use crate::chain::ChainPolicy;
-use crate::registry::GuestId;
-use crate::value::contains_resource;
 
 /// The functions polyfilled onto a linker — the union across guests at
 /// function granularity, since components import only the functions they use
@@ -28,14 +25,14 @@ use crate::value::contains_resource;
 /// interface then function name; the value is the function's type-level
 /// asyncness, so a later guest whose import disagrees is rejected instead of
 /// failing wasmtime's pre-instantiation typecheck with no cross-guest context.
-pub(super) type WiredLinks = BTreeMap<Box<str>, BTreeMap<Box<str>, bool>>;
+pub type WiredLinks = BTreeMap<Box<str>, BTreeMap<Box<str>, bool>>;
 
 /// The caller-side state every polyfilled import shares: the selector
 /// strategy, the chain policy, and the bound transport carrier.
-pub(super) struct Caller {
-    pub(super) selector: Arc<dyn GuestSelector>,
-    pub(super) policy: ChainPolicy,
-    pub(super) transport: InProcess,
+pub struct Caller {
+    pub selector: Arc<dyn GuestSelector>,
+    pub policy: ChainPolicy,
+    pub transport: InProcess,
 }
 
 /// Polyfill one component's imports of the declared `interfaces` not already
@@ -61,7 +58,7 @@ pub(super) struct Caller {
 ///
 /// Returns an error if a named link target is not an interface import, or if a
 /// function cannot be defined on the linker.
-pub(super) fn polyfill_component<T>(
+pub fn polyfill_component<T>(
     engine: &Engine, linker: &mut Linker<T>, id: &GuestId,
     component: &wasmtime::component::Component, interfaces: &BTreeSet<Box<str>>,
     caller: &Arc<Caller>, wired: &mut WiredLinks,

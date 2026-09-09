@@ -21,12 +21,9 @@ use std::collections::hash_map::Entry;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use anyhow::{Result, bail};
+use omnia_core::{ChainCtx, GuestId, LinkClient};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf, split};
 use wrpc_transport::frame::{Oneshot, Server};
-
-use crate::LinkClient;
-use crate::chain::ChainCtx;
-use crate::registry::GuestId;
 
 /// Default in-process pipe buffer size (64 kibibytes).
 const DUPLEX_BUF: usize = 1 << 16;
@@ -63,15 +60,15 @@ pub trait LinkTransport: Send + Sync + 'static {
 /// served function's invocation stream. Dropping the endpoint aborts the
 /// drains, so removing a guest (or finishing the deployment) releases the
 /// `Runtime` clones — and with them the engine — that the tasks pin.
-pub(super) struct Endpoint {
-    pub(super) server: Arc<InProcServer>,
-    pub(super) drains: Vec<tokio::task::JoinHandle<()>>,
+pub struct Endpoint {
+    pub server: Arc<InProcServer>,
+    pub drains: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl Endpoint {
     /// A fresh server with no drains yet; the serve side pushes one per
     /// served function.
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             server: Arc::new(InProcServer::default()),
             drains: Vec::new(),

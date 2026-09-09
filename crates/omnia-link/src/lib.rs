@@ -24,6 +24,8 @@
 //! [`InProcessLinks`] is the [`LinkSeam`] the registry drives when a
 //! deployment declares link interfaces.
 
+#![cfg(not(target_arch = "wasm32"))]
+
 mod decode;
 mod polyfill;
 mod selector;
@@ -35,19 +37,15 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Result;
 use futures::FutureExt as _;
-pub use selector::{FirstArgSelector, GuestSelector};
+use omnia_core::{ChainPolicy, FutureResult, Guest, GuestId, LinkSeam, LoadedGuest, StoreFactory};
 use wasmtime::Engine;
 use wasmtime::component::{Component, Linker};
 use wasmtime_wasi::WasiView;
 use wrpc_wasmtime::WrpcView;
 
 use self::polyfill::{Caller, WiredLinks};
-use self::transport::InProcess;
-use crate::artifact::LoadedGuest;
-use crate::chain::ChainPolicy;
-use crate::host::FutureResult;
-use crate::registry::{Guest, GuestId};
-use crate::seam::{LinkSeam, StoreFactory};
+pub use self::selector::{FirstArgSelector, GuestSelector};
+pub use self::transport::{InProcess, LinkTransport};
 
 /// Guest→guest linking over the in-process wRPC carrier.
 ///

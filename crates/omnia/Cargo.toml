@@ -57,6 +57,7 @@ futures.workspace = true
 omnia-cli = { workspace = true, optional = true }
 omnia-core = { workspace = true, features = ["wrpc"] }
 omnia-host-macros.workspace = true
+omnia-link.workspace = true
 omnia-plugin = { workspace = true, optional = true }
 serde.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }

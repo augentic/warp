@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn digest_refuses_malformed_pins() {
+    fn digest_malformed() {
         for pin in [
             format!("sha512:{}", "ab".repeat(32)),
             "sha256:abcd".into(),
@@ -343,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn digest_serde_round_trip() {
+    fn digest_serde() {
         let json = format!("\"sha256:{}\"", "ab".repeat(32));
         let parsed: Digest = serde_json::from_str(&json).expect("valid digest deserializes");
         assert_eq!(serde_json::to_string(&parsed).expect("serializes"), json);

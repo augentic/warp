@@ -14,7 +14,7 @@ fn message(payload: &(dyn std::any::Any + Send)) -> String {
 }
 
 #[test]
-fn pops_in_order_and_records_requests() {
+fn pops_in_order() {
     let script = Script::new(["one", "two"]);
     assert_eq!(script.next("first"), "one");
     assert_eq!(script.next("second"), "two");
@@ -24,7 +24,7 @@ fn pops_in_order_and_records_requests() {
 }
 
 #[test]
-fn clones_share_the_queue() {
+fn clones_share_queue() {
     let script = Script::new([1, 2]);
     let handle = script.clone();
     assert_eq!(handle.next(()), 1);
@@ -34,7 +34,7 @@ fn clones_share_the_queue() {
 }
 
 #[test]
-fn consuming_past_the_end_panics() {
+fn consume_past_end() {
     let script = Script::<&str, i32>::new([1]);
     assert_eq!(script.next("a"), 1);
     let result = catch_unwind(AssertUnwindSafe(|| script.next("b")));
@@ -45,7 +45,7 @@ fn consuming_past_the_end_panics() {
 }
 
 #[test]
-fn then_answers_past_the_end() {
+fn then_answers() {
     let script = Script::new([1]).then(|| -1);
     assert_eq!(script.next(()), 1);
     assert_eq!(script.next(()), -1);
@@ -54,21 +54,21 @@ fn then_answers_past_the_end() {
 }
 
 #[test]
-fn edit_changes_a_pending_turn() {
+fn edit_pending() {
     let script = Script::<(), Vec<&str>>::new([vec![], vec!["b"]]).edit(1, |turn| turn.push("c"));
     assert_eq!(script.next(()), Vec::<&str>::new());
     assert_eq!(script.next(()), ["b", "c"]);
 }
 
 #[test]
-fn edit_out_of_range_panics() {
+fn edit_out_of_range() {
     let result = catch_unwind(|| Script::<(), i32>::new([1]).edit(3, |_| {}));
     let text = message(&*result.expect_err("editing a missing turn panics"));
     assert!(text.contains("no scripted turn at index 3"), "{text}");
 }
 
 #[test]
-fn assert_exhausted_names_the_remainder() {
+fn assert_exhausted_remainder() {
     let script = Script::<(), i32>::new([1, 2, 3]);
     assert_eq!(script.next(()), 1);
     let result = catch_unwind(AssertUnwindSafe(|| script.assert_exhausted()));
@@ -80,7 +80,7 @@ fn assert_exhausted_names_the_remainder() {
 }
 
 #[test]
-fn dropping_with_turns_left_panics() {
+fn drop_turns_left() {
     let result = catch_unwind(|| {
         let script = Script::<(), i32>::new([1, 2]);
         script.next(());
@@ -90,7 +90,7 @@ fn dropping_with_turns_left_panics() {
 }
 
 #[test]
-fn try_next_records_an_overrun_instead_of_panicking() {
+fn try_next_overrun() {
     let script = Script::<&str, i32>::new([1]);
     assert_eq!(script.try_next("a"), Some(1));
     assert_eq!(script.try_next("b"), None);
@@ -102,7 +102,7 @@ fn try_next_records_an_overrun_instead_of_panicking() {
 }
 
 #[test]
-fn then_answers_try_next_without_an_overrun() {
+fn then_answers_try_next() {
     let script = Script::<(), i32>::new([]).then(|| 7);
     assert_eq!(script.try_next(()), Some(7));
     assert_eq!(script.overruns(), 0);
@@ -110,7 +110,7 @@ fn then_answers_try_next_without_an_overrun() {
 }
 
 #[test]
-fn dropping_with_an_overrun_panics() {
+fn drop_overrun() {
     let result = catch_unwind(|| {
         let script = Script::<(), i32>::new([]);
         assert_eq!(script.try_next(()), None);
@@ -120,7 +120,7 @@ fn dropping_with_an_overrun_panics() {
 }
 
 #[test]
-fn drop_check_stays_silent_once_asserted() {
+fn drop_check_asserted() {
     let script = Script::<(), i32>::new([1, 2]);
     let result = catch_unwind(AssertUnwindSafe(|| script.assert_exhausted()));
     assert!(result.is_err(), "the assertion reports the remainder");
@@ -128,7 +128,7 @@ fn drop_check_stays_silent_once_asserted() {
 }
 
 #[test]
-fn drop_check_stays_silent_under_an_unrelated_panic() {
+fn drop_check_unrelated_panic() {
     let result = catch_unwind(|| {
         let _script = Script::<(), i32>::new([1]);
         panic!("the real failure");

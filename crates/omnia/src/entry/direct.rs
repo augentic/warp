@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_command_forwards_argv_verbatim() {
+    fn direct_argv() {
         // `--config` and `run` are guest arguments, not host CLI options.
         let options = MainOptions::new(Mode::Command).manifest(inline_source("app"));
         let plan = plan(options, argv(&["bin", "--config", "foo.toml", "run", "greet"]))
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_command_peels_log_flags() {
+    fn direct_log_flags() {
         // The reserved flags are host-only wherever they sit in argv; the
         // guest arguments are otherwise untouched.
         let cases: &[(&[&str], LogMode, &[&str])] = &[
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_command_debug_and_quiet_conflict() {
+    fn direct_debug_quiet() {
         let options = MainOptions::new(Mode::Command).manifest(inline_source("app"));
         let error = plan(options, argv(&["bin", "--debug", "greet", "--quiet"]))
             .err()
@@ -247,7 +247,7 @@ mod tests {
     // manifest, so `DeploymentBuilder::build` can never fall through to its own
     // `OMNIA_CONFIG` lookup.
     #[test]
-    fn direct_command_carries_compiled_manifest() {
+    fn direct_compiled_manifest() {
         let options = MainOptions::new(Mode::Command).manifest(inline_source("app"));
         let plan = plan(options, argv(&["bin", "greet"]))
             .unwrap_or_else(|error| panic!("{}", fatal(&error)));
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn non_direct_shape_is_refused() {
+    fn non_direct() {
         let error = plan(MainOptions::new(Mode::Server), argv(&["bin", "run", "guest.wasm"]))
             .err()
             .expect("core cannot serve the `run` grammar");
@@ -265,7 +265,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn direct_command_non_utf8_argv_fails() {
+    fn direct_non_utf8() {
         use std::os::unix::ffi::OsStringExt as _;
 
         let options = MainOptions::new(Mode::Command).manifest(inline_source("app"));

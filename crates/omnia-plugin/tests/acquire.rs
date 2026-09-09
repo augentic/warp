@@ -110,7 +110,7 @@ impl ReleaseStore for MemStore {
 }
 
 #[tokio::test]
-async fn registry_fetch_round_trips() {
+async fn registry_fetch() {
     let registry = TempDir::new().expect("registry dir");
     stage(registry.path(), PACKAGE, b"component bytes");
     let acquirer = registry_acquirer(registry.path()).cached(MemStore::default());
@@ -120,7 +120,7 @@ async fn registry_fetch_round_trips() {
 }
 
 #[tokio::test]
-async fn store_miss_then_populates() {
+async fn store_miss() {
     let registry = TempDir::new().expect("registry dir");
     stage(registry.path(), PACKAGE, b"component bytes");
     let store = MemStore::default();
@@ -133,7 +133,7 @@ async fn store_miss_then_populates() {
 }
 
 #[tokio::test]
-async fn fresh_release_preferred_over_warm_store() {
+async fn fresh_over_warm() {
     let registry = TempDir::new().expect("registry dir");
     stage(registry.path(), PACKAGE, b"first bytes");
     let acquirer = registry_acquirer(registry.path()).cached(MemStore::default());
@@ -148,7 +148,7 @@ async fn fresh_release_preferred_over_warm_store() {
 }
 
 #[tokio::test]
-async fn network_failure_falls_back_to_stored_record() {
+async fn network_failure_fallback() {
     let registry = TempDir::new().expect("registry dir");
     stage(registry.path(), PACKAGE, b"component bytes");
     let store = MemStore::default();
@@ -169,7 +169,7 @@ async fn network_failure_falls_back_to_stored_record() {
 }
 
 #[tokio::test]
-async fn network_failure_without_record_refuses() {
+async fn network_failure_no_record() {
     let acquirer = RegistryClient::new(UNROUTABLE_REGISTRY).cached(MemStore::default());
 
     let error = acquirer.acquire(PACKAGE, None).await.expect_err("nothing stored to fall back to");
@@ -177,7 +177,7 @@ async fn network_failure_without_record_refuses() {
 }
 
 #[tokio::test]
-async fn poisoned_store_entry_discarded_and_refetched() {
+async fn poisoned_store() {
     let registry = TempDir::new().expect("registry dir");
     stage(registry.path(), PACKAGE, b"honest bytes");
     let store = MemStore::default();
@@ -194,7 +194,7 @@ async fn poisoned_store_entry_discarded_and_refetched() {
 }
 
 #[tokio::test]
-async fn release_records_scoped_per_registry() {
+async fn release_scoped() {
     let default_root = TempDir::new().expect("default registry dir");
     stage(default_root.path(), PACKAGE, b"default registry bytes");
     let override_root = TempDir::new().expect("override registry dir");
@@ -216,7 +216,7 @@ async fn release_records_scoped_per_registry() {
 }
 
 #[tokio::test]
-async fn cacheless_acquirer_fetches_fresh() {
+async fn cacheless() {
     let registry = TempDir::new().expect("registry dir");
     stage(registry.path(), PACKAGE, b"first bytes");
     let acquirer = registry_acquirer(registry.path());
@@ -229,7 +229,7 @@ async fn cacheless_acquirer_fetches_fresh() {
 }
 
 #[tokio::test]
-async fn unversioned_and_missing_packages_refuse() {
+async fn unversioned_and_missing() {
     let registry = TempDir::new().expect("registry dir");
     stage(registry.path(), PACKAGE, b"component bytes");
     let acquirer = registry_acquirer(registry.path());
@@ -242,7 +242,7 @@ async fn unversioned_and_missing_packages_refuse() {
 }
 
 #[tokio::test]
-async fn path_acquire_serves_its_own_locations() {
+async fn path_locations() {
     let root = TempDir::new().expect("location dir");
     std::fs::write(root.path().join("plugin.wasm"), b"located bytes").expect("staging component");
     let acquirer = PathMounts::new([(".", root.path())]).expect("locations open at construction");
@@ -259,7 +259,7 @@ async fn path_acquire_serves_its_own_locations() {
 }
 
 #[tokio::test]
-async fn longest_location_name_wins() {
+async fn longest_location() {
     let outer = TempDir::new().expect("outer location");
     let inner = TempDir::new().expect("inner location");
     std::fs::write(inner.path().join("p.wasm"), b"inner").expect("staging component");
@@ -273,7 +273,7 @@ async fn longest_location_name_wins() {
 }
 
 #[tokio::test]
-async fn unlocated_path_and_missing_file_fail() {
+async fn unlocated_and_missing() {
     let root = TempDir::new().expect("location dir");
     let acquirer = PathMounts::new([("adapters", root.path())]).expect("location opens");
 
@@ -282,7 +282,7 @@ async fn unlocated_path_and_missing_file_fail() {
 }
 
 #[tokio::test]
-async fn path_acquire_opens_fail_fast() {
+async fn path_fail_fast() {
     let error = PathMounts::new([("adapters", "/no/such/directory")])
         .expect_err("a missing location refuses at construction");
     assert!(format!("{error:#}").contains("adapters"), "the refusal names the location: {error}");

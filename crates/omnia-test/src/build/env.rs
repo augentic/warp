@@ -82,7 +82,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deny_warnings_in_either_spelling() {
+    fn deny_warnings() {
         assert!(denies_warnings(Some("-Dwarnings")));
         assert!(denies_warnings(Some("-C target-cpu=native -D warnings")));
         assert!(!denies_warnings(Some("-C target-cpu=native")));
@@ -90,7 +90,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitise_strips_cargo_and_toolchain_but_keeps_cargo_home() {
+    fn sanitise_env() {
         let outer = [
             "CARGO_HOME",
             "CARGO_NET_OFFLINE",

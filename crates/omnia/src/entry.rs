@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn compiled_path_load_failure_surfaces() {
+    fn compiled_path_load_failure() {
         let options = MainOptions::new(Mode::Server)
             .manifest(ManifestSource::Path(PathBuf::from("/nonexistent/omnia.toml")));
         let error = materialize(options, argv(&["bin", "run"]), None)

@@ -42,7 +42,7 @@ fn parse_app() {
 }
 
 #[test]
-fn help_is_display_not_usage() {
+fn help_display() {
     let Parsed::Display(text) = parse::<App>(["app", "--help"]) else {
         panic!("help is a display outcome");
     };
@@ -52,7 +52,7 @@ fn help_is_display_not_usage() {
 }
 
 #[test]
-fn version_is_display() {
+fn version_display() {
     let Parsed::Display(text) = parse::<App>(["app", "--version"]) else {
         panic!("version is a display outcome");
     };
@@ -61,7 +61,7 @@ fn version_is_display() {
 }
 
 #[test]
-fn usage_error_exits_64() {
+fn usage_error() {
     let Parsed::Usage(error) = parse::<App>(["app", "bogus"]) else {
         panic!("an unknown verb is a usage error");
     };
@@ -76,7 +76,7 @@ fn usage_error_exits_64() {
 }
 
 #[test]
-fn failure_json_is_flat_kebab_envelope() {
+fn failure_json() {
     let plain = Failure::from(not_found!("no item 42"));
     assert_eq!(plain.exit_code(), 2);
     assert_eq!(plain.hint(), None);
@@ -99,7 +99,7 @@ fn failure_json_is_flat_kebab_envelope() {
 }
 
 #[test]
-fn failure_text_with_hint() {
+fn failure_text() {
     let failure = Failure::from(not_found!("no item 42")).with_hint("run `app list`");
 
     let mut text = String::new();
@@ -111,7 +111,7 @@ fn failure_text_with_hint() {
 }
 
 #[test]
-fn failure_from_anyhow_classifies_through_error() {
+fn failure_from_anyhow() {
     let foreign = Failure::from(anyhow::anyhow!("disk on fire"));
     assert_eq!(foreign.error().code(), "server_error");
     assert_eq!(foreign.exit_code(), 3);
@@ -121,7 +121,7 @@ fn failure_from_anyhow_classifies_through_error() {
 }
 
 #[test]
-fn completions_bash_nonempty() {
+fn completions_bash() {
     let response = completions::<App>(Shell::Bash, "app");
 
     assert_eq!(response.exit, 0);
@@ -132,14 +132,14 @@ fn completions_bash_nonempty() {
 }
 
 #[test]
-fn into_exit_passes_status() {
+fn into_exit() {
     assert_eq!(Response::success("").into_exit(), Ok(()));
     assert_eq!(Response::failure("", 2).into_exit(), Err(2));
     assert_eq!(Response::failure("", USAGE_EXIT).into_exit(), Err(64));
 }
 
 #[test]
-fn from_env_mints_when_absent() {
+fn from_env_mints() {
     let metadata = Metadata::from_env("FROM_ENV_MINTS");
 
     let request_id = metadata.request_id.as_deref().expect("request id is minted");
@@ -213,7 +213,7 @@ async fn call_success_text() {
 }
 
 #[tokio::test]
-async fn call_success_json_pretty_with_newline() {
+async fn call_success_json() {
     let client = Client::new("app", ());
     let metadata = Metadata::default();
     let response = Command::new(&client, &metadata, Format::Json)
@@ -231,7 +231,7 @@ async fn call_success_json_pretty_with_newline() {
 }
 
 #[tokio::test]
-async fn call_handler_error_envelope_exit() {
+async fn call_handler_error() {
     let client = Client::new("app", ());
     let metadata = Metadata::default();
     let command = Command::new(&client, &metadata, Format::Json);
@@ -253,7 +253,7 @@ async fn call_handler_error_envelope_exit() {
 }
 
 #[tokio::test]
-async fn call_decode_error_uses_error_exit() {
+async fn call_decode_error() {
     let client = Client::new("app", ());
     let metadata = Metadata::default();
     let response = Command::new(&client, &metadata, Format::Json)
@@ -297,7 +297,7 @@ mod http_parity {
     use super::*;
 
     #[tokio::test]
-    async fn handler_error_shares_http_discriminant() {
+    async fn handler_error_http() {
         let client = Client::new("app", ());
         let metadata = Metadata::default();
         let response = Command::new(&client, &metadata, Format::Json)

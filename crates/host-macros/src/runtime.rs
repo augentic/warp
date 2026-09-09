@@ -317,7 +317,7 @@ mod tests {
     // host link, no `extend` hook, so the expansion never names a plugin
     // path and builds without `omnia`'s `plugin` feature.
     #[test]
-    fn expand_link_without_locations() {
+    fn expand_link() {
         insta::assert_snapshot!(expand_pretty(quote!({
             link: { interfaces: ["emery:adapter/probe"] },
             guests: [
@@ -330,7 +330,7 @@ mod tests {
     // opt-in: its locations live in the TOML's `[[plugin.location]]` entries,
     // so the loader host links and `extend` installs whatever they declare.
     #[test]
-    fn expand_config_file_with_plugin() {
+    fn expand_config_plugin() {
         insta::assert_snapshot!(expand_pretty(quote!({
             config: concat!(env!("CARGO_MANIFEST_DIR"), "/omnia.toml"),
             plugin: {},

@@ -19,7 +19,7 @@ fn path_ref(package: &str, pin: Option<Digest>) -> PluginRef {
 }
 
 #[tokio::test]
-async fn ensure_loads_once_per_package() {
+async fn ensure_once() {
     let loader = ScriptedLoader::default();
     let cache = PluginCache::new(loader.clone());
     let first = cache.ensure(&path_ref("test:echoer", None)).await.expect("cold load");
@@ -32,7 +32,7 @@ async fn ensure_loads_once_per_package() {
 }
 
 #[tokio::test]
-async fn ensure_refuses_conflicting_re_pin() {
+async fn ensure_re_pin() {
     let loader = ScriptedLoader::default();
     let cache = PluginCache::new(loader.clone());
     cache.ensure(&path_ref("test:echoer", Some(digest("ab")))).await.expect("pinned load");
@@ -53,7 +53,7 @@ async fn ensure_refuses_conflicting_re_pin() {
 
 // A cache drops into any `Plugins`-bounded caller and memoizes there.
 #[tokio::test]
-async fn cache_is_a_provider() {
+async fn cache_provider() {
     async fn load_twice<P: Plugins>(provider: &P) -> Plugin {
         let plugin = path_ref("test:echoer", None);
         Plugins::load(provider, &plugin).await.expect("cold load");

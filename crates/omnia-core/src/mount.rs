@@ -195,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn open_records_identity_and_path() {
+    fn open_identity() {
         let root = temp_root("identity");
         let registry = registry(".", &root, false);
 
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn overridden_mount_path_is_never_opened() {
+    fn overridden_mount_path() {
         let cli_root = temp_root("override-cli");
         // The shadowed manifest entry names a nonexistent path; last-wins dedup
         // discards it before opening, so a stale override does not fail startup.

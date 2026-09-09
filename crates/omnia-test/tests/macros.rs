@@ -42,7 +42,7 @@ fn user(content: &str) -> Request {
 }
 
 #[tokio::test]
-async fn provider_seeds_through_builders_and_delegates_to_fields() {
+async fn provider_seeds() {
     let provider = Everything::default()
         .config(MapConfig::default().with([("region", "eu")]))
         .identity(FixedIdentity::new("tok"))
@@ -66,14 +66,14 @@ async fn provider_seeds_through_builders_and_delegates_to_fields() {
 }
 
 #[tokio::test]
-async fn exemplar_provider_line_compiles_and_defaults() {
+async fn exemplar_provider() {
     let provider = Exemplar::default();
     assert!(StateStore::get(&provider, "missing").await.expect("state").is_none());
     let _: &Sink = &provider.publish;
 }
 
 #[tokio::test]
-async fn delegate_derefs_through_arc_fields() {
+async fn delegate_deref() {
     let storage = Arc::new(Memory::default());
     let provider = Layered {
         model: Scripted::answering(["ok"]),

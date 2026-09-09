@@ -61,7 +61,7 @@ async fn corrected() {
 }
 
 #[tokio::test]
-async fn corrected_with_own_template() {
+async fn own_correction_template() {
     let model = Scripted::answering([
         r#"{"verdict":"fail","findings":[]}"#,
         r#"{"verdict":"pass","findings":[]}"#,
@@ -97,7 +97,7 @@ async fn mismatch() {
 }
 
 #[tokio::test]
-async fn mismatch_then_accepted_is_the_models_miss() {
+async fn mismatch_then_accepted() {
     let model = Scripted::answering([r#"{"other":1}"#, r#"{"verdict":"pass","findings":[]}"#]);
     let verdict = question().ask(&model, "judge this", None, strict).await.expect("a verdict");
     assert_eq!(verdict.verdict, "pass");
@@ -128,7 +128,7 @@ async fn heedless_backend() {
 }
 
 #[tokio::test]
-async fn other_tools_reach_the_callers_handler() {
+async fn other_tools() {
     let model = Scripted::answering([r#"{"verdict":"pass","findings":[]}"#]).calling(
         0,
         [ToolCall {
@@ -148,7 +148,7 @@ async fn other_tools_reach_the_callers_handler() {
 }
 
 #[tokio::test]
-async fn no_tools_refuses_a_tool_call() {
+async fn refuse_tool_call() {
     let model = Scripted::answering([r#"{"verdict":"pass","findings":[]}"#]).calling(
         0,
         [ToolCall {
@@ -207,11 +207,13 @@ impl omnia_guest::Model for Heedless {
         H: FnMut(ToolCall) -> F + Send,
         F: Future<Output = Result<String, String>> + Send,
     {
-        let _verdict = handler(ToolCall {
+        let verdict = handler(ToolCall {
             id: "check-1".into(),
             name: "check".into(),
             arguments: self.0.into(),
-        });
+        })
+        .await;
+        assert!(verdict.is_err(), "the scenario's candidate is one the check rejects");
         Ok(self.reply())
     }
 }

@@ -122,14 +122,14 @@ mod tests {
     }
 
     #[test]
-    fn config_beats_positional_wasm_and_compiled_source() {
+    fn config_beats_positional() {
         let plan = plan(argv(&["bin", "run", "guest.wasm", "--config", "omnia.toml"]), None, true)
             .unwrap_or_else(|error| panic!("{}", fatal(error)));
         assert_eq!(plan.source, RunSource::Config(PathBuf::from("omnia.toml")));
     }
 
     #[test]
-    fn omnia_config_env_beats_positional_wasm() {
+    fn omnia_config_env() {
         let plan =
             plan(argv(&["bin", "run", "guest.wasm"]), Some(OsString::from("from_env.toml")), false)
                 .unwrap_or_else(|error| panic!("{}", fatal(error)));
@@ -137,14 +137,14 @@ mod tests {
     }
 
     #[test]
-    fn positional_wasm_beats_compiled_source() {
+    fn positional_beats_compiled() {
         let plan = plan(argv(&["bin", "run", "guest.wasm"]), None, true)
             .unwrap_or_else(|error| panic!("{}", fatal(error)));
         assert_eq!(plan.source, RunSource::Wasm(PathBuf::from("guest.wasm")));
     }
 
     #[test]
-    fn compiled_source_is_the_fallback() {
+    fn compiled_source() {
         let plan = plan(argv(&["bin", "run"]), None, true)
             .unwrap_or_else(|error| panic!("{}", fatal(error)));
         assert_eq!(plan.source, RunSource::CompiledIn);
@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn link_flag_is_collected() {
+    fn link_flag() {
         let plan =
             plan(argv(&["bin", "run", "guest.wasm", "--link", "omnia:link/echo"]), None, false)
                 .unwrap_or_else(|error| panic!("{}", fatal(error)));
@@ -166,14 +166,14 @@ mod tests {
     }
 
     #[test]
-    fn command_mode_without_deployment_keeps_run_grammar() {
+    fn command_mode() {
         let plan = plan(argv(&["bin", "run", "guest.wasm"]), None, false)
             .unwrap_or_else(|error| panic!("{}", fatal(error)));
         assert_eq!(plan.source, RunSource::Wasm(PathBuf::from("guest.wasm")));
     }
 
     #[test]
-    fn usage_error_is_delegated_to_clap() {
+    fn usage_error() {
         let error = plan(argv(&["bin", "bogus"]), None, false)
             .expect_err("an unknown subcommand is a usage error");
         assert!(matches!(error, PlanError::Usage(_)));

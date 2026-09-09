@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn order_by_other_table_qualifies_column() {
+    fn order_by_other_table() {
         let query =
             SelectBuilder::<Stop>::new().order_by_desc(Some("zone"), "name").build().unwrap();
         assert!(query.sql.ends_with(r#"ORDER BY "zone"."name" DESC"#), "sql: {}", query.sql);

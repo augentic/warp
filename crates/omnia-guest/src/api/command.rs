@@ -421,7 +421,7 @@ mod tests {
     use super::{env_key, write_channel};
 
     #[test]
-    fn env_key_prefixes_and_upper_snakes() {
+    fn env_key_prefix() {
         assert_eq!(env_key("CLI", "request-id"), "CLI_REQUEST_ID");
         assert_eq!(env_key("CLI", "correlation-id"), "CLI_CORRELATION_ID");
         assert_eq!(env_key("EXIT_MAP", "causation-id"), "EXIT_MAP_CAUSATION_ID");
@@ -440,12 +440,12 @@ mod tests {
     }
 
     #[test]
-    fn broken_pipe_is_not_a_failure() {
+    fn broken_pipe() {
         assert_eq!(write_channel(&mut Refusing(ErrorKind::BrokenPipe), b"body"), Ok(()));
     }
 
     #[test]
-    fn refused_channel_exits_as_server_error() {
+    fn refused_channel() {
         assert_eq!(write_channel(&mut Refusing(ErrorKind::PermissionDenied), b"body"), Err(3));
     }
 }

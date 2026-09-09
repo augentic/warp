@@ -629,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn routes_aggregate_across_guests() {
+    fn routes_aggregate() {
         let toml = r#"
             [[guest]]
             id = "a"
@@ -766,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_mount_resolves_relative_to_base() {
+    fn cli_mount_relative() {
         let entry = Mount {
             name: ".".to_owned(),
             path: PathBuf::from("workspace"),
@@ -868,7 +868,7 @@ mod tests {
     }
 
     #[test]
-    fn bytes_source_maps_to_embedded() {
+    fn bytes_source() {
         // `b"..."` is `&'static [u8; N]` — the `include_bytes!` shape.
         let manifest = Manifest::new()
             .guest(GuestEntry::new("baked", b"\0asm"))

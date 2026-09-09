@@ -131,6 +131,7 @@ omnia-core = { path = "crates/omnia-core", version = "0.36.0", default-features 
 omnia-guest = { path = "crates/omnia-guest", version = "0.36.0", default-features = false }
 omnia-guest-macros = { path = "crates/guest-macros", version = "0.36.0" }
 omnia-host-macros = { path = "crates/host-macros", version = "0.36.0" }
+omnia-link = { path = "crates/omnia-link", version = "0.36.0" }
 omnia-plugin = { path = "crates/omnia-plugin", version = "0.36.0" }
 omnia-test = { path = "crates/omnia-test", version = "0.36.0", default-features = false }
 omnia-wasi-blobstore = { path = "crates/wasi-blobstore", version = "0.36.0" }

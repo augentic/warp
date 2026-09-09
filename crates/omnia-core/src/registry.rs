@@ -13,18 +13,17 @@ mod routing;
 
 use std::collections::{BTreeMap, BTreeSet, btree_map};
 use std::fmt;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use anyhow::{Context as _, Result, bail, ensure};
 pub use routing::{CliRoutes, HttpRoutes, PatternRoutes, Resolver, Routes, TriggerRouter};
 use wasmtime::Engine;
 use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime_wasi::WasiView;
-use wrpc_wasmtime::WrpcView;
 
 use crate::RuntimeOptions;
 use crate::artifact::LoadedGuest;
-use crate::dispatch::{self, DispatchHandle, Endpoint};
+use crate::seam::LinkSeam;
 
 /// Opaque guest identity.
 ///
@@ -147,39 +146,37 @@ pub struct Registry<T: 'static> {
     linker: Linker<T>,
     // Concurrent-read, exclusive-write; guards are never held across an await.
     guests: RwLock<BTreeMap<GuestId, Arc<Guest<T>>>>,
+    // Serializes guest lifecycle transitions (register/deregister/bootstrap
+    // serve wiring) against readers, so the guest map and the seam's live
+    // endpoints always change as one atomic step. Lock order: this gate
+    // first, then a single inner map — never the other way around, and never
+    // across an await.
+    lifecycle: RwLock<()>,
     // Assemble-time identities, which deregistration refuses to remove.
     static_ids: BTreeSet<GuestId>,
-    // Link functions polyfilled onto the shared linker at bootstrap, per
-    // interface; a late guest's remaining allow-listed imports are polyfilled
-    // on a linker clone.
-    wired_links: dispatch::WiredLinks,
     routes: Routes,
-    dispatch: Arc<DispatchHandle>,
+    seam: Arc<dyn LinkSeam<T>>,
 }
 
 impl<T: WasiView + 'static> Registry<T> {
-    /// Assemble a registry from a linked deployment's parts: polyfill
-    /// host-mediated imports, pre-instantiate every loaded guest, validate that
-    /// routes name registered guests, and freeze the static set.
+    /// Assemble a registry from a linked deployment's parts: polyfill link
+    /// imports through `seam`, pre-instantiate every loaded guest, validate
+    /// that routes name registered guests, and freeze the static set.
     ///
     /// # Errors
     ///
     /// Returns an error if there are no guests to register (unless
-    /// `allow_empty`), host-mediated imports cannot be polyfilled, a component
-    /// cannot be pre-instantiated, or a route targets a guest that is not
-    /// registered.
+    /// `allow_empty`), link imports cannot be polyfilled, a component cannot
+    /// be pre-instantiated, or a route targets a guest that is not registered.
     pub fn assemble(
         engine: Engine, mut linker: Linker<T>, options: RuntimeOptions, loaded: Vec<LoadedGuest>,
-        routes: Routes, dispatch: Arc<DispatchHandle>, allow_empty: bool,
-    ) -> Result<Self>
-    where
-        T: WrpcView,
-    {
+        routes: Routes, seam: Arc<dyn LinkSeam<T>>, allow_empty: bool,
+    ) -> Result<Self> {
         if loaded.is_empty() && !allow_empty {
             bail!("cannot build a guest registry with no guests");
         }
 
-        let wired_links = dispatch::link(&engine, &mut linker, &loaded, &dispatch)?;
+        seam.polyfill(&engine, &mut linker, &loaded)?;
 
         let mut guests = BTreeMap::new();
         for guest in loaded {
@@ -210,36 +207,26 @@ impl<T: WasiView + 'static> Registry<T> {
             options,
             linker,
             guests: RwLock::new(guests),
+            lifecycle: RwLock::new(()),
             static_ids,
-            wired_links,
             routes,
-            dispatch,
+            seam,
         })
     }
 
     /// Pre-instantiate a late (dynamically registered) component against the
     /// shared host set.
     ///
-    /// Allow-listed link functions the bootstrap did not polyfill (no static
-    /// guest imports them) are polyfilled on a clone of the retained linker,
+    /// Link functions the bootstrap did not polyfill (no static guest imports
+    /// them) are polyfilled by the seam on a clone of the retained linker,
     /// from this component's own import types — the shared linker is never
     /// mutated after bootstrap. Imports outside the linked host set and the
     /// declared link interfaces fail here, exactly as at bootstrap.
     pub(crate) fn instantiate_late(
         &self, id: &GuestId, component: &Component,
-    ) -> Result<InstancePre<T>>
-    where
-        T: WrpcView,
-    {
+    ) -> Result<InstancePre<T>> {
         let mut linker = self.linker.clone();
-        dispatch::polyfill_late(
-            &self.engine,
-            &mut linker,
-            id,
-            component,
-            &self.dispatch,
-            &self.wired_links,
-        )?;
+        self.seam.polyfill_late(&self.engine, &mut linker, id, component)?;
         linker
             .instantiate_pre(component)
             .map_err(anyhow::Error::from)
@@ -260,10 +247,22 @@ impl<T: 'static> Registry<T> {
         &self.options
     }
 
+    /// Enter a lifecycle read section: registry lookups taken under
+    /// this guard never observe a half-applied register or deregister.
+    fn lifecycle_read(&self) -> RwLockReadGuard<'_, ()> {
+        self.lifecycle.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Enter a lifecycle write section: the holder may mutate the guest map
+    /// and the seam's live endpoints as one atomic transition.
+    pub(crate) fn lifecycle_write(&self) -> RwLockWriteGuard<'_, ()> {
+        self.lifecycle.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Look up a guest by identity.
     #[must_use]
     pub fn get(&self, id: &GuestId) -> Option<Arc<Guest<T>>> {
-        let _lifecycle = self.dispatch.lifecycle_read();
+        let _lifecycle = self.lifecycle_read();
         self.guests.read().unwrap_or_else(PoisonError::into_inner).get(id).cloned()
     }
 
@@ -274,34 +273,33 @@ impl<T: 'static> Registry<T> {
     /// The order falls out of the [`BTreeMap`] keying; no per-call sort.
     pub fn guests(&self) -> impl ExactSizeIterator<Item = Arc<Guest<T>>> {
         let snapshot: Vec<Arc<Guest<T>>> = {
-            let _lifecycle = self.dispatch.lifecycle_read();
+            let _lifecycle = self.lifecycle_read();
             self.guests.read().unwrap_or_else(PoisonError::into_inner).values().cloned().collect()
         };
         snapshot.into_iter()
     }
 
-    /// Publish a late guest and its link endpoint as one lifecycle
-    /// transition. Refuses an identity that is already registered (static
-    /// entries can never be shadowed; a dynamic upgrade is
-    /// deregister + register); on refusal neither map is touched, so a failed
-    /// registration leaves no partial state.
-    pub(crate) fn publish(
-        &self, guest: Guest<T>, endpoint: Option<Endpoint>,
-    ) -> Result<(), PublishError> {
+    /// Publish a late guest and its pending link endpoint (parked by the serve
+    /// side) as one lifecycle transition. Refuses an identity that is already
+    /// registered (static entries can never be shadowed; a dynamic upgrade is
+    /// deregister + register), discarding the pending endpoint; on refusal the
+    /// registry map is untouched, so a failed registration leaves no partial
+    /// state.
+    pub(crate) fn publish(&self, guest: Guest<T>) -> Result<(), PublishError> {
         let id = guest.id().clone();
-        let transport = self.dispatch.transport();
 
         // Lifecycle write first, then the inner maps (the crate-wide order).
-        let _lifecycle = self.dispatch.lifecycle_write();
+        let _lifecycle = self.lifecycle_write();
         let mut guests = self.guests.write().unwrap_or_else(PoisonError::into_inner);
         match guests.entry(id.clone()) {
-            btree_map::Entry::Occupied(_) => return Err(PublishError::Occupied(id)),
+            btree_map::Entry::Occupied(_) => {
+                self.seam.discard(&id);
+                return Err(PublishError::Occupied(id));
+            }
             btree_map::Entry::Vacant(slot) => {
-                // Endpoint before entry: `insert` refuses an occupied slot, and
-                // failing here leaves the registry map untouched.
-                if let Some(endpoint) = endpoint {
-                    transport.insert(&id, endpoint).map_err(PublishError::Transport)?;
-                }
+                // Seam before entry: `publish` refuses an occupied live slot,
+                // and failing here leaves the registry map untouched.
+                self.seam.publish(&id).map_err(PublishError::Transport)?;
                 slot.insert(Arc::new(guest));
             }
         }
@@ -316,12 +314,11 @@ impl<T: 'static> Registry<T> {
         if self.static_ids.contains(id) {
             bail!("guest `{id}` is a static deployment entry and cannot be deregistered");
         }
-        let transport = self.dispatch.transport();
 
-        let _lifecycle = self.dispatch.lifecycle_write();
+        let _lifecycle = self.lifecycle_write();
         let removed = self.guests.write().unwrap_or_else(PoisonError::into_inner).remove(id);
         ensure!(removed.is_some(), "guest `{id}` is not registered");
-        transport.remove(id);
+        self.seam.remove(id);
         Ok(())
     }
 
@@ -332,24 +329,23 @@ impl<T: 'static> Registry<T> {
         &self.routes
     }
 
-    /// Returns the shared host-mediated dynamic-linking dispatch handle (the
-    /// selector strategy, dispatch interface set, and bound transport).
+    /// Returns the guest→guest link seam the registry drives.
     #[must_use]
-    pub(crate) const fn dispatch(&self) -> &Arc<DispatchHandle> {
-        &self.dispatch
+    pub(crate) const fn seam(&self) -> &Arc<dyn LinkSeam<T>> {
+        &self.seam
     }
 
     /// Returns the number of registered guests.
     #[must_use]
     pub fn len(&self) -> usize {
-        let _lifecycle = self.dispatch.lifecycle_read();
+        let _lifecycle = self.lifecycle_read();
         self.guests.read().unwrap_or_else(PoisonError::into_inner).len()
     }
 
     /// Returns `true` if the registry has no guests.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        let _lifecycle = self.dispatch.lifecycle_read();
+        let _lifecycle = self.lifecycle_read();
         self.guests.read().unwrap_or_else(PoisonError::into_inner).is_empty()
     }
 }

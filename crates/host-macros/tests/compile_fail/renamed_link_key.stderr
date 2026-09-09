@@ -1,5 +1,0 @@
-error: the `link:` key was renamed; declare host-mediated interfaces with the top-level `plugins: { interfaces: [...] }` block
- --> tests/compile_fail/renamed_link_key.rs:2:5
-  |
-2 |     link: ["omnia:shared/log"],
-  |     ^^^^

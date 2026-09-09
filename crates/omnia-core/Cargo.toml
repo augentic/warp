@@ -38,9 +38,13 @@ mpk = ["wasmtime/memory-protection-keys"]
 # allocate a GC heap, so this is off by default.
 gc = ["wasmtime/gc", "wasmtime/gc-copying"]
 
+# Enables the wRPC store view (`WrpcState`/`LinkClient`) that host-mediated
+# guest→guest linking rides. Without it, every store is WASI-only. Off by
+# default.
+wrpc = ["dep:wrpc-transport", "dep:wrpc-wasmtime"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 anyhow.workspace = true
-bytes.workspace = true
 cap-fs-ext.workspace = true
 cap-std.workspace = true
 cfg-if.workspace = true
@@ -57,10 +61,8 @@ tracing.workspace = true
 tracing-opentelemetry = { workspace = true, optional = true }
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
-tokio-util = { workspace = true, features = ["codec"] }
-wasm-tokio.workspace = true
 wasmtime = { workspace = true, features = ["runtime"] }
 wasmtime-wasi.workspace = true
 wasmtime-wasi-http.workspace = true
-wrpc-transport.workspace = true
-wrpc-wasmtime.workspace = true
+wrpc-transport = { workspace = true, optional = true }
+wrpc-wasmtime = { workspace = true, optional = true }

@@ -4,7 +4,7 @@
 
 ### Overview
 
-Omnia is a Rust monorepo (21 workspace crates + `examples`) providing a lightweight WASM (WASI) component runtime. Embedders depend on the `omnia` composition root, which owns deployment assembly and process lifecycle, re-exports the `omnia-core` live-runtime SDK, the `omnia-plugin` capability crate, the `omnia-cli` leaf grammar crate (behind the `cli` feature), and the `runtime!` macro under one root; a deployment never depends on `omnia-core`, `omnia-plugin`, or `omnia-cli` directly, and code or docs that would require it are a bug. All WASI interfaces ship with in-memory defaults—no external services (Redis, NATS, Kafka, etc.) are needed for building, testing, or running examples.
+Omnia is a Rust monorepo (22 workspace crates + `examples`) providing a lightweight WASM (WASI) component runtime. Embedders depend on the `omnia` composition root, which owns deployment assembly and process lifecycle, re-exports the `omnia-core` live-runtime SDK, the `omnia-link` linking crate, the `omnia-plugin` capability crate, the `omnia-cli` leaf grammar crate (behind the `cli` feature), and the `runtime!` macro under one root; a deployment never depends on `omnia-core`, `omnia-link`, `omnia-plugin`, or `omnia-cli` directly, and code or docs that would require it are a bug. All WASI interfaces ship with in-memory defaults—no external services (Redis, NATS, Kafka, etc.) are needed for building, testing, or running examples.
 
 Terminology (**runtime core**, **host-side**, **host-injected tools**, etc.) is defined in [docs/glossary.md](docs/glossary.md).
 

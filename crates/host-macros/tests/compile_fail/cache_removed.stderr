@@ -1,5 +1,5 @@
 error: the `cache:` key was removed; a declared registry location reads fresh. To cache, assemble the runtime by hand and install `omnia::Plugins` over an `omnia::RegistryClient::cached(store)` from `Wiring::extend`
- --> tests/compile_fail/cache_removed.rs:5:9
+ --> tests/compile_fail/cache_removed.rs:4:9
   |
-5 |         cache: PluginCache,
+4 |         cache: PluginCache,
   |         ^^^^^

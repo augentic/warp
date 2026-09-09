@@ -26,7 +26,7 @@ wasm-pkg-client.workspace = true
 wasmtime = { workspace = true, features = ["runtime"] }
 
 [dev-dependencies]
-omnia = { workspace = true, features = ["plugin"] }
+omnia = { workspace = true, features = ["plugin", "link"] }
 omnia-test = { workspace = true, features = ["host"] }
 omnia-wasi-otel.workspace = true
 serde = { workspace = true, features = ["derive"] }

@@ -143,8 +143,8 @@ impl Plugin {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// The request or deployment is wrong and a retry cannot succeed: an
-    /// unserved location kind, a malformed or mismatched digest pin, an
-    /// invalid artifact, or a missing seam export.
+    /// unserved location kind, a malformed or mismatched digest pin, or an
+    /// invalid artifact.
     #[error("refused: {0}")]
     Refused(String),
     /// The acquirer could not produce the package bytes; the source may

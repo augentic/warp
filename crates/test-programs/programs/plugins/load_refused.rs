@@ -1,7 +1,6 @@
 //! Every typed refusal: registry location, malformed and mismatched pins, a
-//! missing file, native (pre-compiled) bytes, a component without the
-//! declared seam, a deployment-guest identity, and a conflicting re-pin of an
-//! active package.
+//! missing file, native (pre-compiled) bytes, a deployment-guest identity,
+//! and a conflicting re-pin of an active package.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -56,10 +55,6 @@ async fn scenario() {
     // A native (pre-compiled) artifact is refused before wasmtime sees it.
     let err = load("test:native", "./native.bin", None).await.expect_err("native bytes");
     assert_refused(&err, "pre-compiled");
-
-    // A valid component that exports no declared link interface.
-    let err = load("test:noseam", "./noseam.wasm", None).await.expect_err("no seam export");
-    assert_refused(&err, "link interfaces");
 
     // A deployment guest's identity can never be re-bound by a load.
     let err = load("requester", "./plugin.wasm", None).await.expect_err("static identity");

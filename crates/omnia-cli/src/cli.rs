@@ -39,10 +39,10 @@ pub enum Command {
         mounts: Vec<MountArg>,
 
         /// Host-mediated interface to dispatch on a guest's behalf
-        /// (repeatable). Unioned with the manifest's `plugins` list when
+        /// (repeatable). Unioned with the manifest's `[link] interfaces` when
         /// `--config` is also given.
-        #[arg(long = "plugins")]
-        plugins: Vec<String>,
+        #[arg(long = "link")]
+        link: Vec<String>,
 
         /// Arguments forwarded to the guest as its argv (everything after
         /// `--`). Empty for a long-lived server; a `wasi:cli` command reads

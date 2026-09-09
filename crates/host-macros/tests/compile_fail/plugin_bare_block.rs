@@ -1,5 +1,5 @@
 omnia_host_macros::runtime!({
-    plugins: ["omnia:shared/log"],
+    plugin: {},
     guests: [
         { id: "api", source: "api.wasm" },
     ],

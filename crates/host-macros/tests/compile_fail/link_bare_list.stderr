@@ -1,0 +1,5 @@
+error: the `link:` key takes a block: `link: { interfaces: ["ns:pkg/iface"] }`
+ --> tests/compile_fail/link_bare_list.rs:2:5
+  |
+2 |     link: ["omnia:shared/log"],
+  |     ^^^^

@@ -41,15 +41,15 @@ pub enum RunSource {
     CompiledIn,
 }
 
-/// The planner's outcome: source, CLI mounts, plugins, and guest argv.
+/// The planner's outcome: source, CLI mounts, link interfaces, and guest argv.
 #[derive(Debug, PartialEq, Eq)]
 pub struct RunPlan {
     /// Which source the precedence ladder selected.
     pub source: RunSource,
     /// `--mount` arguments, in argv order.
     pub mounts: Vec<MountArg>,
-    /// `--plugins` arguments, in argv order.
-    pub plugins: Vec<String>,
+    /// `--link` arguments, in argv order.
+    pub link: Vec<String>,
     /// Arguments forwarded to the guest as its argv (everything after `--`).
     pub args: Vec<String>,
 }
@@ -74,7 +74,7 @@ pub fn plan(
             wasm,
             config,
             mounts,
-            plugins,
+            link,
             args,
         } => {
             let config = config.or_else(|| omnia_config.map(PathBuf::from));
@@ -92,7 +92,7 @@ pub fn plan(
             Ok(RunPlan {
                 source,
                 mounts,
-                plugins,
+                link,
                 args,
             })
         }
@@ -155,6 +155,14 @@ mod tests {
         let error = plan(argv(&["bin", "run"]), None, false)
             .expect_err("a sourceless deployment must fail");
         assert!(fatal(error).contains("no guest specified"));
+    }
+
+    #[test]
+    fn link_flag_is_collected() {
+        let plan =
+            plan(argv(&["bin", "run", "guest.wasm", "--link", "omnia:link/echo"]), None, false)
+                .unwrap_or_else(|error| panic!("{}", fatal(error)));
+        assert_eq!(plan.link, ["omnia:link/echo"]);
     }
 
     #[test]

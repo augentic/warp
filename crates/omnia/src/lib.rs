@@ -2,8 +2,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 #![allow(unsafe_code)] // `DeploymentBuilder::build_trusted` and `Source::load`
 
-// The embedder facade: the runtime spine (`omnia-core`), the plugins
-// capability (`omnia-plugin`, behind the `plugin` feature), the `run` grammar
+// The embedder facade: the runtime spine (`omnia-core`), host-mediated linking
+// (`omnia-link`, behind the `link` feature), the plugins capability
+// (`omnia-plugin`, behind the `plugin` feature), the `run` grammar
 // (`omnia-cli`, behind the `cli` feature), and the `runtime!` macro,
 // re-exported under one root. The `runtime!` macro emits `omnia::…` paths, so
 // every name it references must stay reachable from here — the plugin names
@@ -34,18 +35,27 @@ pub use futures;
 pub use omnia_cli::{Cli, Command, Parser};
 #[doc(inline)]
 pub use omnia_core::{
-    AdmitError, Backend, CliRoutes, Dispatcher, ExitStatus, Extensions, FirstArgSelector, FromEnv,
-    FutureResult, Guest, GuestArtifact, GuestId, GuestSelector, HasDispatcher, HasExtensions,
-    HasLimits, HasMounts, HasTable, Host, HostCtx, HttpBorrow, HttpCtx, HttpRoutes, LinkClient,
-    Location, LogMode, MountRegistry, NoOptions, PatternRoutes, Provides, Proxy, Registry,
+    AdmitError, Backend, ChainPolicy, CliRoutes, Dispatcher, ExitStatus, Extensions, FromEnv,
+    FutureResult, Guest, GuestArtifact, GuestId, HasDispatcher, HasExtensions, HasLimits,
+    HasMounts, HasTable, Host, HostCtx, HttpBorrow, HttpCtx, HttpRoutes, LinkSeam, Location,
+    LogMode, MountRegistry, NoLinks, NoOptions, PatternRoutes, Provides, Proxy, Registry,
     ResolvedPreopen, Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreBase, StoreConfig,
-    StoreCtx, StoreView, Telemetry, TriggerRouter, WeakRuntime, WrpcState, as_command_chain,
+    StoreCtx, StoreFactory, StoreView, Telemetry, TriggerRouter, WeakRuntime, as_command_chain,
     get_cloned, host_error, serve_links, sha256_digest, telemetry, wasi_view,
 };
+#[cfg(feature = "link")]
+#[doc(inline)]
+pub use omnia_core::{LinkClient, WrpcState};
+#[cfg(feature = "link")]
 #[doc(hidden)]
-pub use omnia_core::{WrpcCtxView, WrpcView, pastey, tokio, wasmtime, wasmtime_wasi};
+pub use omnia_core::{WrpcCtxView, WrpcView};
+#[doc(hidden)]
+pub use omnia_core::{pastey, tokio, wasmtime, wasmtime_wasi};
 #[doc(inline)]
 pub use omnia_host_macros::runtime;
+#[cfg(feature = "link")]
+#[doc(inline)]
+pub use omnia_link::{FirstArgSelector, GuestSelector, InProcessLinks};
 #[cfg(feature = "plugin")]
 #[doc(inline)]
 pub use omnia_plugin::{
@@ -54,8 +64,8 @@ pub use omnia_plugin::{
 };
 
 pub use self::deployment::{
-    Deployment, DeploymentBuilder, GuestEntry, GuestRoutes, Manifest, Mount, SourceSpec, Transport,
-    TransportKind,
+    Deployment, DeploymentBuilder, GuestEntry, GuestRoutes, LinkConfig, LinkStore, Manifest, Mount,
+    PluginConfig, SourceSpec, Transport, TransportKind,
 };
 #[doc(hidden)]
 pub use self::entry::{MainOptions, ManifestSource, main};

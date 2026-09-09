@@ -1,0 +1,5 @@
+error: `link: {}` declares nothing; add `interfaces: ["ns:pkg/iface"]`
+ --> tests/compile_fail/link_bare_block.rs:2:5
+  |
+2 |     link: {},
+  |     ^^^^

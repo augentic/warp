@@ -7,10 +7,9 @@ use std::sync::{Arc, Weak};
 
 use anyhow::{Context as _, Result};
 use wasmtime::Store;
-use wasmtime::component::{Component, Instance, InstancePre, types};
+use wasmtime::component::{Component, Instance, InstancePre};
 
 use crate::artifact::GuestArtifact;
-use crate::dispatch::serve_guest;
 use crate::extensions::Extensions;
 use crate::location::Location;
 use crate::mount::MountRegistry;
@@ -146,9 +145,6 @@ pub enum AdmitError {
     /// The bytes are a native artifact, not a valid raw wasm component, or
     /// failed pre-instantiation against the deployment's host set.
     ArtifactRefused(String),
-    /// The component exports no interface declared in the deployment's
-    /// link seam list.
-    SeamMissing(String),
     /// The identity is already registered — an earlier or racing
     /// registration holds it.
     AlreadyRegistered(String),
@@ -160,7 +156,6 @@ impl fmt::Display for AdmitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ArtifactRefused(reason)
-            | Self::SeamMissing(reason)
             | Self::AlreadyRegistered(reason)
             | Self::Internal(reason) => f.write_str(reason),
         }
@@ -190,8 +185,8 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
     /// Build a runtime from already-assembled parts.
     ///
     /// Does not wire the host-mediated link serve side — a caller whose
-    /// deployment declares link interfaces must run [`crate::serve_links`]
-    /// itself before dispatching.
+    /// deployment declares link interfaces must run
+    /// [`serve_links`](Self::serve_links) itself before dispatching.
     #[must_use]
     pub fn from_parts(parts: RuntimeParts<B>) -> Self {
         Self::with_inner(Arc::new(RuntimeInner {
@@ -207,7 +202,7 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
     }
 
     /// The deployment's plugin acquisition locations (the manifest's
-    /// `[[location]]` entries), for the loader capability to install against.
+    /// `[[plugin.location]]` entries), for the loader capability to install against.
     #[must_use]
     pub fn plugin_locations(&self) -> &[Location] {
         &self.inner.locations
@@ -334,6 +329,15 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
         store
     }
 
+    /// A shareable factory for fresh, fully configured guest stores — what the
+    /// link serve side hands to each served function to instantiate the
+    /// target per call.
+    #[must_use]
+    pub fn store_factory(&self) -> Arc<dyn Fn() -> Store<StoreCtx<B>> + Send + Sync> {
+        let runtime = self.clone();
+        Arc::new(move || runtime.build_store(runtime.store()))
+    }
+
     /// Instantiate a guest component into `store`.
     ///
     /// # Errors
@@ -396,14 +400,15 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
         let instance_pre = registry.instantiate_late(&id, &component)?;
         let guest = Guest::local(id.clone(), instance_pre);
 
-        // Wire the guest's linked exports (if any); publish then makes the
-        // endpoint and the registry entry observable in one atomic step. If
-        // publish refuses (a racing registration won), dropping the unused
-        // endpoint aborts its drain tasks.
-        let endpoint = serve_guest(self, &guest)
+        // Serve the guest's linked exports (if any) as a pending endpoint;
+        // publish then makes the endpoint and the registry entry observable in
+        // one atomic step, discarding the endpoint if a racing registration won.
+        registry
+            .seam()
+            .serve(self.store_factory(), &guest)
             .await
             .with_context(|| format!("serving guest `{id}` link exports"))?;
-        registry.publish(guest, endpoint).map_err(PublishError::into_anyhow)?;
+        registry.publish(guest).map_err(PublishError::into_anyhow)?;
 
         tracing::debug!(guest = %id, "guest registered");
         Ok(())
@@ -411,10 +416,12 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
 
     /// Admit raw wasm bytes as a late guest: refuse a native (pre-compiled)
     /// artifact before wasmtime sees the bytes, validate on the safe path,
-    /// require an export of a declared link interface, then register and
-    /// serve the component under `id` — the privileged registration half
-    /// behind the `omnia:plugins/loader` capability. Acquisition, digest
-    /// policy, and idempotency live with the loader (`omnia-plugin`).
+    /// then register and serve the component under `id` — the privileged
+    /// registration half behind the `omnia:plugins/loader` capability.
+    /// Acquisition, digest policy, and idempotency live with the loader
+    /// (`omnia-plugin`). Whether the component exports a linked interface is
+    /// not checked here: a guest that exports none is still reachable through
+    /// the host [`Dispatcher`], and a link call to it fails at the call site.
     ///
     /// The registry entry records the content digest of `bytes`, so the
     /// attestation lives exactly as long as the entry —
@@ -423,8 +430,8 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
     /// # Errors
     ///
     /// Returns a typed [`AdmitError`] naming the refusal: refused artifact,
-    /// missing seam export, an identity already registered (an earlier or
-    /// racing registration), or an internal serve/publication failure.
+    /// an identity already registered (an earlier or racing registration), or
+    /// an internal serve/publication failure.
     pub async fn admit(&self, id: GuestId, bytes: Vec<u8>) -> Result<(), AdmitError> {
         let digest: std::sync::Arc<str> = std::sync::Arc::from(crate::sha256_digest(&bytes));
 
@@ -434,18 +441,16 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
                 AdmitError::ArtifactRefused(format!("validating `{id}`: {error:#}"))
             })?;
 
-        self.check_seam_export(&id, &component)?;
-
         // The same publish sequence as `Runtime::register`: pre-instantiate
         // against the shared host set, wire seam exports, publish atomically.
         let instance_pre = self.registry().instantiate_late(&id, &component).map_err(|error| {
             AdmitError::ArtifactRefused(format!("pre-instantiating `{id}`: {error:#}"))
         })?;
         let guest = Guest::local(id.clone(), instance_pre).with_digest(digest);
-        let endpoint = serve_guest(self, &guest).await.map_err(|error| {
+        self.registry().seam().serve(self.store_factory(), &guest).await.map_err(|error| {
             AdmitError::Internal(format!("serving `{id}` seam exports: {error:#}"))
         })?;
-        self.registry().publish(guest, endpoint).map_err(|error| match error {
+        self.registry().publish(guest).map_err(|error| match error {
             PublishError::Occupied(id) => {
                 AdmitError::AlreadyRegistered(format!("guest `{id}` is already registered"))
             }
@@ -456,32 +461,6 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
 
         tracing::debug!(guest = %id, "late guest admitted");
         Ok(())
-    }
-
-    /// Refuse a component that exports no interface from the deployment's
-    /// declared link seam list.
-    fn check_seam_export(&self, id: &GuestId, component: &Component) -> Result<(), AdmitError> {
-        let links = self.registry().dispatch().links();
-        if links.is_empty() {
-            return Err(AdmitError::SeamMissing(format!(
-                "cannot admit `{id}`: this deployment declares no link interfaces"
-            )));
-        }
-        let engine = self.registry().engine();
-        let exports_seam =
-            component.component_type().exports(engine).any(|(interface, extern_)| {
-                links.contains(interface)
-                    && matches!(extern_.ty, types::ComponentItem::ComponentInstance(_))
-            });
-        if exports_seam {
-            Ok(())
-        } else {
-            let declared: Vec<&str> = links.iter().map(AsRef::as_ref).collect();
-            Err(AdmitError::SeamMissing(format!(
-                "`{id}` exports none of the declared link interfaces ({})",
-                declared.join(", ")
-            )))
-        }
     }
 
     /// Remove a dynamically registered guest. New dispatches to `id` fail as
@@ -506,8 +485,63 @@ impl<B: Clone + Send + Sync + 'static> Runtime<B> {
     /// is finished. In-flight invocations hold their own server handles and
     /// complete; only new dispatches are cut off.
     pub fn shutdown(&self) {
-        self.registry().dispatch().transport().clear();
+        self.registry().seam().shutdown();
     }
+
+    /// Wire the serve side of every registered guest's linked exports, then
+    /// publish them all under one lifecycle transition so polyfilled imports
+    /// can reach them. `Deployment::assemble` calls this during bootstrap; only
+    /// a runtime assembled through [`from_parts`](Self::from_parts) wires it
+    /// explicitly. A no-op for a deployment that declares no link interfaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a guest's export cannot be served, or a served guest
+    /// already has an endpoint (`serve_links` ran twice).
+    pub async fn serve_links(&self) -> Result<()> {
+        let registry = self.registry();
+        let seam = registry.seam();
+        let factory = self.store_factory();
+        let guests: Vec<_> = registry.guests().collect();
+
+        // On any failure, release what is still parked so a failed bootstrap
+        // pins nothing.
+        let discard_from = |first_unpublished: usize| {
+            for guest in &guests[first_unpublished..] {
+                seam.discard(guest.id());
+            }
+        };
+
+        for guest in &guests {
+            if let Err(error) = seam.serve(Arc::clone(&factory), guest).await {
+                discard_from(0);
+                return Err(error);
+            }
+        }
+
+        let _lifecycle = registry.lifecycle_write();
+        for (published, guest) in guests.iter().enumerate() {
+            if let Err(error) = seam.publish(guest.id()) {
+                discard_from(published + 1);
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Wire the link serve side of every registered guest; see
+/// [`Runtime::serve_links`].
+///
+/// # Errors
+///
+/// Returns an error if a guest's export cannot be served, or a served guest
+/// already has an endpoint.
+pub async fn serve_links<B>(runtime: &Runtime<B>) -> Result<()>
+where
+    B: Clone + Send + Sync + 'static,
+{
+    runtime.serve_links().await
 }
 
 #[cfg(test)]

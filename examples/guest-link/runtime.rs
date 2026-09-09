@@ -4,7 +4,7 @@
 //! (the Rust equivalent of `omnia.toml`): `responder` (exports
 //! `omnia:link/echo`) and `router` (imports it, exports `run`). The router's
 //! import is unsatisfied by its own component — the deployment names the
-//! interface in its `plugins:` list, so the host polyfills it on the shared
+//! interface in its `link:` list, so the host polyfills it on the shared
 //! linker and, at bootstrap, wires the serve side of every dispatched
 //! interface (`omnia::serve_links`, run by `Deployment::assemble`), so a dispatched
 //! call always finds the responder's in-process wRPC server.
@@ -18,7 +18,7 @@ cfg_if::cfg_if! {
         use omnia_wasi_otel::{WasiOtel, OtelDefault};
 
         omnia::runtime!({
-            plugins: { interfaces: ["omnia:link/echo"] },
+            link: { interfaces: ["omnia:link/echo"] },
             guests: [
                 {
                     id: "responder",

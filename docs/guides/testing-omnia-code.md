@@ -86,7 +86,7 @@ The generic header goes in square brackets so the macro can find the type that f
 
 ## Component rung: `Deployment` over `Backends`
 
-`Deployment` describes one command-mode deployment — guests, mounts, arguments, plugin interfaces, and the directory the `.` path location serves — and runs it over a backend bundle. Built from nothing it drives a single component through the host you name:
+`Deployment` describes one command-mode deployment — guests, mounts, arguments, link interfaces, and the directory the `.` path location serves — and runs it over a backend bundle. Built from nothing it drives a single component through the host you name:
 
 ```rust,ignore
 use omnia::ExitStatus;

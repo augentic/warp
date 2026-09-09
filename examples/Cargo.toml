@@ -22,7 +22,7 @@ omnia-wasi-vault.workspace = true
 omnia-wasi-websocket.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-omnia.workspace = true
+omnia = { workspace = true, features = ["link"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
 

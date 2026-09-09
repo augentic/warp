@@ -123,7 +123,7 @@ omnia::runtime!({
 
 Note the same `omnia-wasi-http` crate appears in both manifests: it compiles to guest bindings on `wasm32` and to the host implementation on native targets.
 
-That dependency list is complete. `omnia` is the facade over the runtime — the crates behind it (`omnia-core`, `omnia-plugin`) are never named in a host's `Cargo.toml` or source, even when the deployment declares a `plugins:` block or a hand-written `Backend`; everything the macro emits resolves through `omnia::…`, and it re-exports `anyhow` (`omnia::anyhow::Result`) and `futures` (`omnia::futures::future::BoxFuture`) for the `Backend`/`Wiring` and plugin-store signatures that speak them.
+That dependency list is complete. `omnia` is the facade over the runtime — the crates behind it (`omnia-core`, `omnia-link`, `omnia-plugin`) are never named in a host's `Cargo.toml` or source, even when the deployment declares a `link:` or `plugin:` block or a hand-written `Backend`; everything the macro emits resolves through `omnia::…`, and it re-exports `anyhow` (`omnia::anyhow::Result`) and `futures` (`omnia::futures::future::BoxFuture`) for the `Backend`/`Wiring` and plugin-store signatures that speak them.
 
 ## Build and run
 

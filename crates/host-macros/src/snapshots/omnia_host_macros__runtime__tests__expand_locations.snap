@@ -1,6 +1,6 @@
 ---
 source: crates/host-macros/src/runtime.rs
-expression: "expand_pretty(quote!({\n    plugins:\n    {\n        interfaces: [\"emery:adapter/probe\"], locations:\n        [{ name: \".\", path: project_root() }, { registry: \"ghcr.io\" },],\n    }, guests: [{ id: \"engine\", source: \"engine.wasm\" },], hosts:\n    { WasiOtel: OtelDefault, },\n}))"
+expression: "expand_pretty(quote!({\n    link: { interfaces: [\"emery:adapter/probe\"] }, plugin:\n    {\n        locations:\n        [{ name: \".\", path: project_root() }, { registry: \"ghcr.io\" },],\n    }, guests: [{ id: \"engine\", source: \"engine.wasm\" },], hosts:\n    { WasiOtel: OtelDefault, },\n}))"
 ---
 mod runtime {
     use omnia::anyhow::Result;
@@ -57,7 +57,7 @@ mod runtime {
     pub fn manifest() -> omnia::ManifestSource {
         omnia::ManifestSource::Inline(
             omnia::Manifest::new()
-                .plugins(["emery:adapter/probe"])
+                .link(["emery:adapter/probe"])
                 .locations([omnia::Location::path(".", project_root())])
                 .locations([omnia::Location::registry("ghcr.io")])
                 .guest(omnia::GuestEntry::new("engine", "engine.wasm")),

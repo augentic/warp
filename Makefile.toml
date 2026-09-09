@@ -81,6 +81,11 @@ cargo clippy -p omnia-guest --no-default-features --features schema --all-target
 cargo clippy -p omnia --no-default-features --features jit --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features otlp --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features plugin --all-targets -- -D warnings
+cargo clippy -p omnia --no-default-features --features link --all-targets -- -D warnings
+cargo clippy -p omnia --no-default-features --features link,plugin --all-targets -- -D warnings
+cargo clippy -p omnia-core --no-default-features --all-targets -- -D warnings
+cargo clippy -p omnia-core --no-default-features --features wrpc --all-targets -- -D warnings
+cargo clippy -p omnia-link --all-targets -- -D warnings
 cargo clippy -p omnia-cli --no-default-features --all-targets -- -D warnings
 cargo clippy -p omnia-cli --no-default-features --features jit --all-targets -- -D warnings
 for features in build guest host guest,host; do

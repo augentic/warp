@@ -18,7 +18,7 @@ test_programs::foreach_link!();
 /// Boot a runtime over `guests` (assembled in order) with
 /// `omnia-test:link/ops` dispatched.
 async fn boot(guests: &[(&str, &str)]) -> Result<Runtime<()>> {
-    let mut manifest = Manifest::new().plugins(["omnia-test:link/ops"]);
+    let mut manifest = Manifest::new().link(["omnia-test:link/ops"]);
     for (id, wasm) in guests {
         manifest = manifest.guest(GuestEntry::new(*id, *wasm));
     }

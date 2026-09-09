@@ -86,7 +86,7 @@ fn materialize(
         writable: arg.writable,
     });
     Ok(DeploymentBuilder::new()
-        .manifest(manifest.mounts(mounts).plugins(plan.plugins))
+        .manifest(manifest.mounts(mounts).link(plan.link))
         .args(plan.args)
         .mode(mode))
 }

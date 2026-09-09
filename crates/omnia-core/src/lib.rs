@@ -3,6 +3,7 @@
 #![allow(unsafe_code)] // wasmtime component deserialization
 
 mod artifact;
+mod chain;
 mod digest;
 mod dispatch;
 mod extensions;
@@ -12,22 +13,25 @@ mod mount;
 mod options;
 mod registry;
 mod runtime;
+mod seam;
 mod store;
 pub mod telemetry;
+mod value;
 
 #[doc(hidden)]
 pub use pastey;
+#[cfg(feature = "wrpc")]
 #[doc(hidden)]
 pub use wrpc_wasmtime::{WrpcCtxView, WrpcView};
 #[doc(hidden)]
 pub use {anyhow, futures, tokio, wasmtime, wasmtime_wasi};
 
 pub use self::artifact::{ELF_MAGIC, GuestArtifact, LoadedGuest, is_precompiled};
+#[cfg(feature = "wrpc")]
+pub use self::chain::with_chain;
+pub use self::chain::{ChainCtx, ChainPolicy, as_command_chain};
 pub use self::digest::sha256_digest;
-pub use self::dispatch::{
-    DispatchHandle, Dispatcher, FirstArgSelector, GuestSelector, LinkClient, WrpcState,
-    as_command_chain, serve_links,
-};
+pub use self::dispatch::Dispatcher;
 pub use self::extensions::Extensions;
 pub use self::host::{
     Backend, FromEnv, FutureResult, HasTable, Host, HostCtx, NoOptions, Provides, Proxy, Server,
@@ -39,12 +43,16 @@ pub use self::options::RuntimeOptions;
 pub use self::registry::{
     CliRoutes, Guest, GuestId, HttpRoutes, PatternRoutes, Registry, Resolver, Routes, TriggerRouter,
 };
-pub use self::runtime::{AdmitError, ExitStatus, Runtime, RuntimeParts, WeakRuntime};
+pub use self::runtime::{AdmitError, ExitStatus, Runtime, RuntimeParts, WeakRuntime, serve_links};
+pub use self::seam::{LinkSeam, NoLinks, StoreFactory};
 pub use self::store::{
     HasDispatcher, HasExtensions, HasLimits, HasMounts, HttpBorrow, HttpCtx, StoreBase,
     StoreConfig, StoreCtx, StoreView,
 };
+#[cfg(feature = "wrpc")]
+pub use self::store::{LinkClient, WrpcState};
 pub use self::telemetry::{LogMode, Telemetry};
+pub use self::value::contains_resource;
 
 /// Generates the standard host-error conversions every `omnia` WASI host
 /// crate repeats.

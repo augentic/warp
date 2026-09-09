@@ -13,9 +13,8 @@
 use std::borrow::Cow;
 
 use anyhow::{Result, bail};
+use omnia_core::GuestId;
 use wasmtime::component::Val;
-
-use crate::registry::GuestId;
 
 /// Chooses the target guest for a host-mediated call and the parameters to
 /// forward to it.

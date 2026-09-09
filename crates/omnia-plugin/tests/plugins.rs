@@ -12,11 +12,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
+use omnia::wasmtime::component::Val;
 use omnia::{
-    DeploymentBuilder, ExitStatus, GuestArtifact, GuestEntry, LoadError, Location, Manifest, Mode,
-    Origin, PathMounts, PathSource, PluginLoader as _, Plugins, RegistryClient, RegistrySource,
-    Runtime, StoreCtx, WasiPlugins, sha256_digest,
+    DeploymentBuilder, ExitStatus, GuestArtifact, GuestEntry, GuestId, LoadError, Location,
+    Manifest, Mode, Origin, PathMounts, PathSource, PluginLoader as _, Plugins, RegistryClient,
+    RegistrySource, Runtime, StoreCtx, WasiPlugins, sha256_digest,
 };
 use omnia_test::host::{Backends, Scratch, scratch};
 use omnia_wasi_otel::WasiOtel;
@@ -26,15 +27,15 @@ use omnia_wasi_otel::WasiOtel;
 test_programs::foreach_plugins!();
 
 /// Assemble the requester deployment around `wasm`: the scratch dir mounts at
-/// `.`, `omnia-test:link/ops` is the declared plugin seam, and the two slots
-/// are the compiled-in acquisition policy. The telemetry host serves the
-/// `command!` guest's otel imports.
-async fn requester_runtime(
+/// `.`, `interfaces` is the declared link list (empty for plugin-only), and
+/// the two slots are the compiled-in acquisition policy. The telemetry host
+/// serves the `command!` guest's otel imports.
+async fn requester_runtime_with(
     wasm: &str, scratch: &Scratch, registry: Option<Arc<dyn RegistrySource>>,
-    path: Option<Arc<dyn PathSource>>,
+    path: Option<Arc<dyn PathSource>>, interfaces: &[&str],
 ) -> Result<Runtime<Backends>> {
     let manifest = Manifest::new()
-        .plugins(["omnia-test:link/ops"])
+        .link(interfaces.iter().copied())
         .guest(GuestEntry::new("requester", wasm))
         .mounts([scratch.mount(false)]);
     let mut deployment = DeploymentBuilder::new()
@@ -49,6 +50,61 @@ async fn requester_runtime(
         deployment.assemble(Backends::defaults().await).await.context("assembling runtime")?;
     Plugins::install(&runtime, registry, path)?;
     Ok(runtime)
+}
+
+/// Assemble with `omnia-test:link/ops` declared — the mixed and existing
+/// requester scenarios.
+async fn requester_runtime(
+    wasm: &str, scratch: &Scratch, registry: Option<Arc<dyn RegistrySource>>,
+    path: Option<Arc<dyn PathSource>>,
+) -> Result<Runtime<Backends>> {
+    requester_runtime_with(wasm, scratch, registry, path, &["omnia-test:link/ops"]).await
+}
+
+/// Host→guest `omnia-test:link/ops` `ping` through the [`Dispatcher`].
+async fn invoke_ping(runtime: &Runtime<Backends>, target: &str, message: &str) -> Result<String> {
+    let results = runtime
+        .dispatcher()
+        .invoke(
+            GuestId::from(target),
+            Some("omnia-test:link/ops".to_owned()),
+            "ping".to_owned(),
+            vec![Val::String(target.to_owned()), Val::String(message.to_owned())],
+        )
+        .await
+        .with_context(|| format!("dispatching ping to `{target}`"))?;
+    match results.into_iter().next() {
+        Some(Val::String(answer)) => Ok(answer),
+        other => bail!("ping on `{target}` returned a non-string result: {other:?}"),
+    }
+}
+
+/// Instantiate `guest` fresh and drive a world-level string export.
+async fn call_export(
+    runtime: &Runtime<Backends>, guest: &str, func: &str, message: &str,
+) -> Result<String> {
+    let entry = runtime
+        .registry()
+        .get(&GuestId::from(guest))
+        .with_context(|| format!("guest `{guest}` is not registered"))?;
+    let mut store = runtime.build_store(runtime.store());
+    let instance = runtime
+        .instantiate(entry.instance_pre(), &mut store)
+        .await
+        .with_context(|| format!("instantiating `{guest}`"))?;
+    let export = instance
+        .get_func(&mut store, func)
+        .with_context(|| format!("guest `{guest}` exports `{func}`"))?;
+    let mut results = vec![Val::Bool(false)];
+    export
+        .call_async(&mut store, &[Val::String(message.to_owned())], &mut results)
+        .await
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("calling `{guest}`'s `{func}`"))?;
+    match results.into_iter().next() {
+        Some(Val::String(answer)) => Ok(answer),
+        other => bail!("`{guest}`'s `{func}` returned a non-string result: {other:?}"),
+    }
 }
 
 /// Drive `wasm` as the `requester` command guest under the given slots.
@@ -148,8 +204,8 @@ fn wit_copies_stay_identical() {
 // suite pins the expansion shape; this pins the types and the carried data.
 mod locations_grammar {
     omnia::runtime!({
-        plugins: {
-            interfaces: ["omnia-test:link/ops"],
+        link: { interfaces: ["omnia-test:link/ops"] },
+        plugin: {
             locations: [
                 { name: "adapters", path: "adapters" },
                 { registry: "ghcr.io" },
@@ -168,7 +224,7 @@ fn locations_grammar_carries_manifest_data() {
     let _ = (locations_grammar::main, locations_grammar::run, locations_grammar::run_with::<()>);
     let manifest = locations_grammar::manifest().into_manifest().expect("inline source resolves");
     assert_eq!(
-        manifest.locations,
+        manifest.plugin.locations,
         [Location::path("adapters", "adapters"), Location::registry("ghcr.io"),]
     );
 }
@@ -178,9 +234,6 @@ async fn plugins_load_refused() {
     let scratch = scratch();
     std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
         .expect("staging the loadable echoer");
-    // Exports no `omnia-test:link/ops` instance — the seam-missing target.
-    std::fs::copy(test_programs::LINK_FULL, scratch.path().join("noseam.wasm"))
-        .expect("staging the seamless component");
     // Leading ELF magic is exactly what the loader sniffs; the tail is junk,
     // proving refusal happens before any wasmtime parsing.
     std::fs::write(scratch.path().join("native.bin"), [0x7f, b'E', b'L', b'F', 0, 0, 0, 0])
@@ -195,6 +248,107 @@ async fn plugins_load_refused() {
     .await
     .expect("deployment runs");
     assert_eq!(status, ExitStatus::SUCCESS, "the requester's assertions all held");
+}
+
+// Admission no longer requires a linked export: a component exporting no
+// `omnia-test:link/ops` loads (it stays reachable through the host
+// `Dispatcher`), and a link call to it fails at the call site — the polyfill
+// traps the requester, so the failure is observed here, after the load.
+#[tokio::test]
+async fn plugins_load_unlinked() {
+    let scratch = scratch();
+    std::fs::copy(test_programs::LINK_FULL, scratch.path().join("noseam.wasm"))
+        .expect("staging the unlinked component");
+
+    let runtime = requester_runtime(
+        test_programs::PLUGINS_LOAD_UNLINKED,
+        &scratch,
+        None,
+        Some(path_source(&scratch)),
+    )
+    .await
+    .expect("assembling runtime");
+
+    let error = runtime.run_command().await.expect_err("the link call traps the requester");
+    assert!(
+        runtime.registry().get(&"test:unlinked".into()).is_some(),
+        "the load succeeded before the call failed: {error:#}"
+    );
+    let detail = format!("{error:#}");
+    assert!(
+        detail.contains("guest `test:unlinked` is registered but exports no linked interface"),
+        "the trap diagnoses the unlinked target: {detail}"
+    );
+    runtime.shutdown();
+}
+
+// Plugin without link: no interfaces declared, the requester loads a
+// host-only handler and exits, then the host drives it through the
+// Dispatcher — guests cannot import it.
+#[tokio::test]
+async fn plugins_load_host_only() {
+    let scratch = scratch();
+    std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
+        .expect("staging the loadable echoer");
+
+    let runtime = requester_runtime_with(
+        test_programs::PLUGINS_LOAD_HOST_ONLY,
+        &scratch,
+        None,
+        Some(path_source(&scratch)),
+        &[],
+    )
+    .await
+    .expect("assembling runtime");
+
+    let status = runtime.run_command().await.expect("deployment runs");
+    assert_eq!(status, ExitStatus::SUCCESS, "the requester's load held");
+    assert!(
+        runtime.registry().get(&GuestId::from("test:echoer")).is_some(),
+        "the host-only handler is registered"
+    );
+
+    let answer = invoke_ping(&runtime, "test:echoer", "hi").await.expect("host dispatch");
+    assert_eq!(answer, "test:echoer pong: hi");
+    runtime.shutdown();
+}
+
+// Link + plugin, mixed: one loaded plugin exports the linked interface and
+// answers a guest call; another exports nothing linked, loads fine, and is
+// driven host-side. Both loads succeed — no admission check.
+#[tokio::test]
+async fn plugins_load_mixed() {
+    let scratch = scratch();
+    std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
+        .expect("staging the link target");
+    std::fs::copy(test_programs::LINK_FULL, scratch.path().join("handler.wasm"))
+        .expect("staging the host-only handler");
+
+    let runtime = requester_runtime(
+        test_programs::PLUGINS_LOAD_MIXED,
+        &scratch,
+        None,
+        Some(path_source(&scratch)),
+    )
+    .await
+    .expect("assembling runtime");
+
+    let status = runtime.run_command().await.expect("deployment runs");
+    assert_eq!(status, ExitStatus::SUCCESS, "the requester's assertions all held");
+    assert!(
+        runtime.registry().get(&GuestId::from("echoer")).is_some(),
+        "the link target is registered"
+    );
+    assert!(
+        runtime.registry().get(&GuestId::from("test:handler")).is_some(),
+        "the host-only handler is registered"
+    );
+
+    let answer = call_export(&runtime, "test:handler", "poke", "hi")
+        .await
+        .expect("host dispatch of the handler");
+    assert_eq!(answer, "echoer pong: hi");
+    runtime.shutdown();
 }
 
 /// A wasm custom section (id 0) named `omnia-test` wrapping `payload`:
@@ -300,7 +454,7 @@ async fn pinned_reload_refuses_after_external_reregistration() {
 async fn load_without_plugins_installed_refuses() {
     let scratch = scratch();
     let manifest = Manifest::new()
-        .plugins(["omnia-test:link/ops"])
+        .link(["omnia-test:link/ops"])
         .guest(GuestEntry::new("requester", test_programs::PLUGINS_LOAD_PATH))
         .mounts([scratch.mount(false)]);
     let mut deployment = DeploymentBuilder::new()

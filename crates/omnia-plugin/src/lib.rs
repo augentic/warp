@@ -13,7 +13,7 @@
 //! (endpoints, cache, path reads) is the two slots [`Plugins::install`]
 //! takes — one per [`Origin`] kind — from the deployment's `Wiring::extend`
 //! hook. [`Plugins::install_declared`] fills them from the deployment's
-//! declared locations (the `runtime!` macro's `plugins: { locations: [...] }`
+//! declared locations (the `runtime!` macro's `plugin: { locations: [...] }`
 //! list, carried as manifest data). The built-in acquirers are
 //! [`PathMounts`] and [`RegistryClient`]; a store behind `RegistryClient`
 //! implements [`ContentStore`] and [`ReleaseStore`]. The runtime core keeps

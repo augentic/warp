@@ -3,6 +3,7 @@
 mod manifest;
 mod source;
 
+#[cfg(feature = "link")]
 use std::collections::BTreeSet;
 use std::env;
 use std::sync::Arc;
@@ -10,16 +11,20 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 pub use manifest::{
-    GuestEntry, GuestRoutes, Manifest, Mount, SourceSpec, Transport, TransportKind,
+    GuestEntry, GuestRoutes, LinkConfig, Manifest, Mount, PluginConfig, SourceSpec, Transport,
+    TransportKind,
 };
 use omnia_core::wasmtime::component::Linker;
 use omnia_core::wasmtime::{Config, Engine};
 use omnia_core::wasmtime_wasi::WasiView;
+#[cfg(feature = "link")]
+use omnia_core::{ChainPolicy, WrpcView};
 use omnia_core::{
-    DispatchHandle, FirstArgSelector, GuestId, GuestSelector, Host, LoadedGuest, Location, LogMode,
-    MountRegistry, Registry, Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreCtx,
-    Telemetry, WrpcView, serve_links,
+    GuestId, Host, LinkSeam, LoadedGuest, Location, LogMode, MountRegistry, NoLinks, Registry,
+    Routes, Runtime, RuntimeOptions, RuntimeParts, Server, StoreCtx, Telemetry,
 };
+#[cfg(feature = "link")]
+use omnia_link::{FirstArgSelector, GuestSelector, InProcessLinks};
 use source::ArtifactPolicy;
 
 use crate::Mode;
@@ -191,14 +196,16 @@ impl DeploymentBuilder {
             options,
             guests,
             routes: manifest.routes(),
+            #[cfg(feature = "link")]
             links: manifest.link_interfaces(),
+            #[cfg(feature = "link")]
             selector: Arc::new(FirstArgSelector),
             mounts,
             args: Arc::new(args),
             mode: self.mode,
             allow_empty: self.allow_empty,
             command_guest: manifest.command_guest(),
-            locations: manifest.locations,
+            locations: manifest.plugin.locations,
         })
     }
 
@@ -254,8 +261,10 @@ pub struct Deployment<T: WasiView + 'static> {
     guests: Vec<LoadedGuest>,
     routes: Routes,
     // Guest links — the host-mediated interfaces.
+    #[cfg(feature = "link")]
     links: BTreeSet<Box<str>>,
     // Host-mediated dispatch selector.
+    #[cfg(feature = "link")]
     selector: Arc<dyn GuestSelector>,
     // Mount registry opened from the manifest's resolved preopens.
     mounts: Arc<MountRegistry>,
@@ -272,6 +281,20 @@ pub struct Deployment<T: WasiView + 'static> {
     // for the loader capability to install against.
     locations: Vec<Location>,
 }
+
+/// Store bound that carries wRPC only when the `link` feature is enabled.
+#[cfg(feature = "link")]
+pub trait LinkStore: WasiView + WrpcView + 'static {}
+
+/// Store bound that carries wRPC only when the `link` feature is enabled.
+#[cfg(not(feature = "link"))]
+pub trait LinkStore: WasiView + 'static {}
+
+#[cfg(feature = "link")]
+impl<T: WasiView + WrpcView + 'static> LinkStore for T {}
+
+#[cfg(not(feature = "link"))]
+impl<T: WasiView + 'static> LinkStore for T {}
 
 impl<T: WasiView> Deployment<T> {
     /// Link a WASI host's interfaces into the shared Linker.
@@ -291,6 +314,7 @@ impl<T: WasiView> Deployment<T> {
     ///
     /// Defaults to [`FirstArgSelector`] — the runtime core's "first call argument is the
     /// identity" strategy. Chainable.
+    #[cfg(feature = "link")]
     pub fn selector(&mut self, selector: impl GuestSelector) -> &mut Self {
         self.selector = Arc::new(selector);
         self
@@ -339,14 +363,20 @@ impl<T: WasiView> Deployment<T> {
     /// component cannot be pre-instantiated, or the registry cannot be assembled.
     pub fn into_registry(self) -> Result<Registry<T>>
     where
-        T: WrpcView,
+        T: LinkStore,
     {
-        let dispatch = DispatchHandle::new(
-            self.selector,
-            self.links,
-            self.options.max_dispatch_depth,
-            self.options.guest_timeout,
-        );
+        #[cfg(feature = "link")]
+        let seam: Arc<dyn LinkSeam<T>> = if self.links.is_empty() {
+            Arc::new(NoLinks)
+        } else {
+            Arc::new(InProcessLinks::new(
+                self.selector,
+                self.links,
+                ChainPolicy::from(&self.options),
+            ))
+        };
+        #[cfg(not(feature = "link"))]
+        let seam: Arc<dyn LinkSeam<T>> = Arc::new(NoLinks);
 
         Registry::assemble(
             self.engine,
@@ -354,7 +384,7 @@ impl<T: WasiView> Deployment<T> {
             self.options,
             self.guests,
             self.routes,
-            dispatch,
+            seam,
             self.allow_empty,
         )
     }
@@ -377,7 +407,7 @@ impl<B: Clone + Send + Sync + 'static> Deployment<StoreCtx<B>> {
             backends,
             registry: Arc::new(self.into_registry().context("assembling registry")?),
         });
-        serve_links(&runtime).await.context("wiring host-mediated link serve side")?;
+        runtime.serve_links().await.context("wiring host-mediated link serve side")?;
         Ok(runtime)
     }
 }

@@ -21,20 +21,20 @@ pub fn expand(config: &Config) -> TokenStream {
         backends_def,
         main_options,
         manifest,
-        link_plugins,
+        link_loader,
     } = Codegen::from(config);
 
     let mode = mode.tokens();
     // A declared `locations:` list opts the deployment into the loader host —
     // worlds that do not import `omnia:plugins/loader` never see it — and
-    // installs those locations. Interfaces-only deployments emit no plugin
+    // installs those locations. `link:`-only deployments emit no plugin
     // path at all, so they build without `omnia`'s `plugin` feature.
-    let plugins_host = link_plugins.then(|| {
+    let plugins_host = link_loader.then(|| {
         quote! {
             deployment.host::<omnia::WasiPlugins, B>()?;
         }
     });
-    let extend_hook = link_plugins.then(|| {
+    let extend_hook = link_loader.then(|| {
         quote! {
             fn extend(runtime: &omnia::Runtime<B>) -> Result<()> {
                 omnia::Plugins::install_declared(runtime)
@@ -254,16 +254,16 @@ mod tests {
         })));
     }
 
-    // Guest-owned routes and the deployment-wide plugins block: every trigger
+    // Guest-owned routes and the deployment-wide `link:` block: every trigger
     // list expands to `route_*` builder calls on the owning `GuestEntry` (the
-    // guest id is the implicit target), the `plugins:` block's `interfaces:`
-    // list to `.plugins(...)` calls on the `Manifest` — and, with no
-    // `locations:`, no loader host link — and patterns/interfaces are
+    // guest id is the implicit target), the `link:` block's `interfaces:`
+    // list to `.link(...)` calls on the `Manifest` — and, with no
+    // `plugin:` locations, no loader host link — and patterns/interfaces are
     // arbitrary expressions.
     #[test]
     fn expand_inline_manifest() {
         insta::assert_snapshot!(expand_pretty(quote!({
-            plugins: { interfaces: ["omnia:link/echo"] },
+            link: { interfaces: ["omnia:link/echo"] },
             guests: [
                 {
                     id: "responder",
@@ -297,8 +297,8 @@ mod tests {
     #[test]
     fn expand_locations() {
         insta::assert_snapshot!(expand_pretty(quote!({
-            plugins: {
-                interfaces: ["emery:adapter/probe"],
+            link: { interfaces: ["emery:adapter/probe"] },
+            plugin: {
                 locations: [
                     { name: ".", path: project_root() },
                     { registry: "ghcr.io" },
@@ -313,27 +313,27 @@ mod tests {
         })));
     }
 
-    // A `plugins:` block without `locations:` is interfaces-only: no loader
+    // A `link:` block without `plugin:` is interfaces-only: no loader
     // host link, no `extend` hook, so the expansion never names a plugin
     // path and builds without `omnia`'s `plugin` feature.
     #[test]
-    fn expand_plugins_without_locations() {
+    fn expand_link_without_locations() {
         insta::assert_snapshot!(expand_pretty(quote!({
-            plugins: { interfaces: ["emery:adapter/probe"] },
+            link: { interfaces: ["emery:adapter/probe"] },
             guests: [
                 { id: "engine", source: "engine.wasm" },
             ],
         })));
     }
 
-    // A bare `plugins: {}` beside `config:` is the config-file deployment's
-    // opt-in: its locations live in the TOML's `[[location]]` entries, so
-    // the loader host links and `extend` installs whatever they declare.
+    // A bare `plugin: {}` beside `config:` is the config-file deployment's
+    // opt-in: its locations live in the TOML's `[[plugin.location]]` entries,
+    // so the loader host links and `extend` installs whatever they declare.
     #[test]
-    fn expand_config_file_with_plugins() {
+    fn expand_config_file_with_plugin() {
         insta::assert_snapshot!(expand_pretty(quote!({
             config: concat!(env!("CARGO_MANIFEST_DIR"), "/omnia.toml"),
-            plugins: {},
+            plugin: {},
             hosts: {
                 WasiOtel: OtelDefault,
             },
@@ -346,12 +346,23 @@ mod tests {
     fn locations_refused_beside_config() {
         let error = syn::parse2::<Config>(quote!({
             config: concat!(env!("CARGO_MANIFEST_DIR"), "/omnia.toml"),
-            plugins: {
+            plugin: {
                 locations: [{ registry: "ghcr.io" }],
             },
         }))
         .err()
         .expect("locations beside config must be refused");
         assert!(error.to_string().contains("mutually exclusive"), "{error}");
+    }
+
+    #[test]
+    fn empty_link_block_refused() {
+        let error = syn::parse2::<Config>(quote!({
+            link: {},
+            guests: [{ id: "api", source: "api.wasm" }],
+        }))
+        .err()
+        .expect("empty link block must be refused");
+        assert!(error.to_string().contains("`link: {}` declares nothing"), "{error}");
     }
 }

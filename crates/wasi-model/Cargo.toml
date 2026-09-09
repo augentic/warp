@@ -25,7 +25,6 @@ tracing.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cap-std.workspace = true
 futures.workspace = true
-jsonschema.workspace = true
 omnia-core.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
@@ -42,6 +41,5 @@ wit-bindgen.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 omnia.workspace = true
 omnia-test = { workspace = true, features = ["host"] }
-serde_json.workspace = true
 test-programs.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

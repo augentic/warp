@@ -3,9 +3,9 @@
 use std::fmt;
 
 use crate::host::Error;
-use crate::host::generated::omnia::model::completion::{Mcp, Request, Role, Tool};
+use crate::host::generated::omnia::model::completion::{Format, Mcp, Request, Role, Tool};
 
-const RESERVED_TOOLS: &[&str] = &["read", "list", "write"];
+const RESERVED_TOOLS: &[&str] = &["read", "list", "write", "check"];
 
 impl Request {
     /// The request's MCP server grants, each carrying its own endpoint URL.
@@ -59,7 +59,13 @@ impl Request {
             return Err(Error::InvalidRequest("empty request".to_owned()));
         }
 
-        self.format.validate_definition().map_err(Error::InvalidRequest)
+        if let Format::Schema(spec) = &self.format
+            && serde_json::from_str::<serde_json::Value>(&spec.schema).is_err()
+        {
+            return Err(Error::InvalidRequest("format schema is not valid JSON".to_owned()));
+        }
+
+        Ok(())
     }
 }
 
@@ -92,8 +98,8 @@ impl fmt::Display for Role {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mcp, Request, Role, Tool};
-    use crate::host::{Format, Function, Grants, Message};
+    use super::{Format, Mcp, Request, Role, Tool};
+    use crate::host::{Function, Grants, Message};
 
     fn request(system: Option<&str>, messages: Vec<(Role, &str)>, tools: Vec<Tool>) -> Request {
         Request {
@@ -110,6 +116,7 @@ mod tests {
             format: Format::Text,
             tools,
             grants: Grants { workspace: None },
+            check: false,
         }
     }
 

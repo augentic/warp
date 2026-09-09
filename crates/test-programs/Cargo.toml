@@ -15,9 +15,10 @@ autoexamples = false
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 clap.workspace = true
 futures.workspace = true
-omnia-guest = { workspace = true, features = ["command"] }
+omnia-guest = { workspace = true, features = ["command", "schema"] }
 omnia-wasi-model.workspace = true
 omnia-wasi-otel.workspace = true
+serde.workspace = true
 tracing.workspace = true
 wasip3.workspace = true
 wit-bindgen.workspace = true
@@ -53,8 +54,28 @@ path = "programs/link/partial.rs"
 crate-type = ["cdylib"]
 
 [[example]]
-name = "model_answer_rejected"
-path = "programs/model/answer_rejected.rs"
+name = "model_check_accepted"
+path = "programs/model/check_accepted.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "model_check_corrected"
+path = "programs/model/check_corrected.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "model_check_exhausted"
+path = "programs/model/check_exhausted.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "model_check_mismatch"
+path = "programs/model/check_mismatch.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "model_check_plain"
+path = "programs/model/check_plain.rs"
 crate-type = ["cdylib"]
 
 [[example]]
@@ -70,11 +91,6 @@ crate-type = ["cdylib"]
 [[example]]
 name = "model_echo_text"
 path = "programs/model/echo_text.rs"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "model_format_gate"
-path = "programs/model/format_gate.rs"
 crate-type = ["cdylib"]
 
 [[example]]

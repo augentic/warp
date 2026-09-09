@@ -13,7 +13,6 @@ use omnia_wasi_config::WasiConfig;
 use omnia_wasi_keyvalue::WasiKeyValueCtx as _;
 use omnia_wasi_model::WasiModel;
 use omnia_wasi_otel::WasiOtel;
-use serde_json::json;
 
 test_programs::foreach_config!();
 
@@ -56,7 +55,7 @@ async fn runtime_overlay_drives_the_production_wiring() {
     // The generated `main` and `run` stay untouched; the overlay reaches the
     // same `Hooks` through `run_with`.
     let _ = (production::main, production::run);
-    let backends = Backends::defaults().await.model(ScriptedModel::answering([json!("second")]));
+    let backends = Backends::defaults().await.model(ScriptedModel::answering(["second"]));
     let status = Deployment::from(production::manifest())
         .run_with::<production::Hooks, _>(backends.clone())
         .await
@@ -94,7 +93,7 @@ async fn path_root_rewrites_the_production_location() {
 
 #[tokio::test]
 async fn scripted_model_answers_a_guest_completion() {
-    let backends = Backends::defaults().await.model(ScriptedModel::answering([json!("second")]));
+    let backends = Backends::defaults().await.model(ScriptedModel::answering(["second"]));
     let status = Deployment::new()
         .guest("echo", test_programs::MODEL_ECHO_TEXT)
         .run_host::<WasiModel, _>(backends.clone())
@@ -113,7 +112,7 @@ async fn scripted_model_answers_a_guest_completion() {
 
 #[tokio::test]
 async fn scripted_calls_drive_the_guest_tool_handler() {
-    let model = ScriptedModel::answering([json!("42")]).calling(0, [("lookup", "{}")]);
+    let model = ScriptedModel::answering(["42"]).calling(0, [("lookup", "{}")]);
     let backends = Backends::defaults().await.model(model);
     let status = Deployment::new()
         .guest("tools", test_programs::MODEL_TOOL_ROUNDTRIP)
@@ -151,7 +150,7 @@ async fn exhausted_script_fails_the_guest_not_the_test() {
 
 #[tokio::test]
 async fn then_answers_past_the_script() {
-    let model = ScriptedModel::answering([]).then(|| json!("second"));
+    let model = ScriptedModel::answering::<String>([]).then(|| "second".to_owned());
     let backends = Backends::defaults().await.model(model);
     let status = Deployment::new()
         .guest("echo", test_programs::MODEL_ECHO_TEXT)

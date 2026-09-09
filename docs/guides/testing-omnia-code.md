@@ -93,7 +93,7 @@ use omnia::ExitStatus;
 use omnia_test::host::{Backends, Deployment, ScriptedModel};
 use omnia_wasi_model::WasiModel;
 
-let backends = Backends::defaults().await.model(ScriptedModel::answering([json!("second")]));
+let backends = Backends::defaults().await.model(ScriptedModel::answering(["second"]));
 let status = Deployment::new()
     .guest("echo", ECHO_WASM)
     .run_host::<WasiModel, _>(backends.clone())

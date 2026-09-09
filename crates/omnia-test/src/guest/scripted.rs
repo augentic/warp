@@ -5,7 +5,9 @@ use std::future::{Future, ready};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
-use omnia_guest::model::{Error, Format, Function, Model, Reply, Request, Tool, ToolCall};
+use omnia_guest::model::{
+    CHECK_TOOL, Error, Format, Function, Model, Reply, Request, Tool, ToolCall,
+};
 use omnia_guest::plugins::{self, Digest, Plugin, PluginRef, Plugins};
 
 use crate::{Exchange, Script, Seen, SeenFormat};
@@ -36,6 +38,12 @@ impl Turn {
 /// calls: `complete_with` feeds them to the handler and records each
 /// exchange before the turn's result returns. A call past the script panics;
 /// [`Scripted::then`] opts into a fallback instead.
+///
+/// A request with `check` set plays the backend's loop: each scripted turn
+/// is one candidate, offered to the handler as the reserved `check` call and
+/// recorded. `Ok` returns that turn; `Err(correction)` advances to the next
+/// turn, and a script exhausted on a rejection is `BudgetExhausted`
+/// carrying the correction — one scripted answer per attempt.
 ///
 /// ```
 /// use omnia_guest::model::{Message, Model as _, Request, Role};
@@ -151,12 +159,14 @@ impl Scripted {
 impl Model for Scripted {
     /// # Panics
     ///
-    /// Panics if the turn has scripted tool calls (those require
-    /// `complete_with`), or if the script is exhausted without a fallback.
+    /// Panics if the turn has scripted tool calls or the request asks for a
+    /// `check` (both require `complete_with`), or if the script is exhausted
+    /// without a fallback.
     fn complete(&self, request: Request) -> impl Future<Output = Result<Reply, Error>> + Send {
-        let turn = self.script.next(request);
         // A single-shot completion has no handler; scripting tool calls on
-        // its turn is a harness bug.
+        // its turn, or asking it to check, is a harness bug.
+        assert!(!request.check, "a check requires complete_with");
+        let turn = self.script.next(request);
         assert!(turn.calls.is_empty(), "scripted tool calls require complete_with");
         ready(turn.result)
     }
@@ -171,18 +181,47 @@ impl Model for Scripted {
         H: FnMut(ToolCall) -> F + Send,
         F: Future<Output = Result<String, String>> + Send,
     {
-        let turn = self.script.next(request);
+        let script = self.script.clone();
         let exchanges = Arc::clone(&self.exchanges);
         async move {
-            for call in turn.calls {
-                let outcome = handler(call.clone()).await;
+            let mut attempt = 0;
+            loop {
+                let turn = script.next(request.clone());
+                for call in turn.calls {
+                    let outcome = handler(call.clone()).await;
+                    exchanges.lock().expect("exchanges lock").push(Exchange {
+                        tool: call.name,
+                        arguments: call.arguments,
+                        outcome,
+                    });
+                }
+                let (candidate, reply) = match (&request.check, turn.result) {
+                    (false, result) | (true, result @ Err(_)) => return result,
+                    (true, Ok(reply)) => (reply.answer.clone(), reply),
+                };
+
+                attempt += 1;
+                let outcome = handler(ToolCall {
+                    id: format!("check-{attempt}"),
+                    name: CHECK_TOOL.to_owned(),
+                    arguments: candidate.clone(),
+                })
+                .await;
                 exchanges.lock().expect("exchanges lock").push(Exchange {
-                    tool: call.name,
-                    arguments: call.arguments,
-                    outcome,
+                    tool: CHECK_TOOL.to_owned(),
+                    arguments: candidate,
+                    outcome: outcome.clone(),
                 });
+                match outcome {
+                    Ok(_) => return Ok(reply),
+                    // The next scripted answer is the model's corrected
+                    // attempt; none left is the backend's round budget.
+                    Err(correction) if script.remaining() == 0 => {
+                        return Err(Error::BudgetExhausted(correction));
+                    }
+                    Err(_) => {}
+                }
             }
-            turn.result
         }
     }
 }
@@ -210,6 +249,7 @@ impl From<&Request> for Seen {
                 .collect(),
             temperature: request.generation.as_ref().and_then(|generation| generation.temperature),
             workspace: request.workspace.clone(),
+            check: request.check,
         }
     }
 }

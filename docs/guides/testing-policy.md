@@ -5,7 +5,7 @@ How the Omnia repository tests *itself*. The binding rules are also in the repos
 ## The tiers
 
 - **End-to-end tests** are the primary tier for `wasi-*` host crates: a real guest component driven through omnia's own runtime against an inline scenario backend, pinning the whole boundary (guest bindings → linker → host binding → backend and back). The exemplar is `crates/wasi-model/tests/model.rs`.
-- **Unit tests** cover deterministic logic wherever it lives: parsers, codecs, filter/type translation, route matching, macro token expansion, guest-side library code. If a behavior is a pure function no guest boundary reaches (e.g. `Format::parse` candidate extraction, which backends drive directly), it is a unit test next to that logic.
+- **Unit tests** cover deterministic logic wherever it lives: parsers, codecs, filter/type translation, route matching, macro token expansion, guest-side library code. If a behavior is a pure function no guest boundary reaches (e.g. `Format::candidate` extraction, which backends drive directly), it is a unit test next to that logic.
 - **Live tests** (in the `omnia-backends` repo) are the acceptance tier for production backends: `#[ignore]`-gated, credential-gated, driving the backend's `WasiXxxCtx` against the real service.
 
 Guest-instantiating tests exist **only** through the shared pipeline below. Do not compile, deserialize, or instantiate a WASM guest ad hoc inside an individual test.
@@ -34,7 +34,7 @@ One group tests the guest SDK's own boundary rather than a `wasi-*` host: `progr
 The bundle a suite runs over is `omnia_test::host::Backends`: the in-memory default for every host, deterministic (no environment read, no socket opened), with the model swappable for any `WasiModelCtx`. Most model scenarios script `ScriptedModel` — the answers, the tool calls and workspace steps each completion makes before answering, and the limits — and assert the recorded exchanges afterwards:
 
 ```rust,noplayground
-let model = ScriptedModel::answering([json!("42")]).calling(0, [("lookup", "{}")]);
+let model = ScriptedModel::answering(["42"]).calling(0, [("lookup", "{}")]);
 run_guest(test_programs::MODEL_TOOL_ROUNDTRIP, vec![], model.clone()).await;
 model.assert_exhausted();
 assert_eq!(model.exchanges(), [Exchange { tool: "lookup".into(), arguments: "{}".into(), outcome: Ok("42".into()) }]);

@@ -29,14 +29,8 @@ cfg_if::cfg_if! {
             fn complete(
                 &self, _request: Request, _tool_host: Arc<dyn ToolHost>,
             ) -> FutureResult<Answer> {
-                let answer = Answer {
-                    value: serde_json::json!({
-                        "verdict": "pass",
-                        "reason": "the bounds check is correct",
-                    }),
-                    usage: None,
-                    transcript: None,
-                };
+                let answer =
+                    Answer::from(r#"{"verdict":"pass","reason":"the bounds check is correct"}"#);
                 Box::pin(async move { Ok(answer) })
             }
         }

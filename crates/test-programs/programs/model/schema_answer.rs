@@ -1,4 +1,5 @@
-//! A conforming backend answer passes the schema gate and reaches the guest.
+//! Without a `check`, a `format::schema` answer passes through as the
+//! backend produced it: the schema steers the provider, nothing gates.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -15,6 +16,6 @@ async fn scenario() {
         ))
         .build();
 
-    let reply = WasiModel.complete(request).await.expect("canned answer satisfies the schema");
+    let reply = WasiModel.complete(request).await.expect("the answer passes through");
     assert_eq!(reply.answer, r#"{"verdict":"pass"}"#);
 }

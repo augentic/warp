@@ -96,9 +96,9 @@ Specify’s invariant that domain-specific knowledge lives in backends, guests, 
 
 Work done inside Omnia host crates (validation, dispatch, workspace resolution) as opposed to backend-side logic in the `omnia-backends` repo (e.g. genai’s tool loop).
 
-### Host validation gate
+### Guest check
 
-The `complete` binding’s pre-checks and final answer validation before the guest sees a result. Backends may self-check internally; the host re-validates as the single authority.
+The `omnia:model/completion` request flag (`check`) under which the backend offers each candidate answer to the guest before finishing, as a tool call named `check` over the session. The guest's `ok` ends the completion; its `err(text)` is appended verbatim as the correction turn and the backend goes round again. The host validates nothing about the answer — `format` only steers the provider — so acceptance lives with the guest that knows the type (`omnia_guest::model::Question<T>` runs the exchange for a typed answer).
 
 ### Host-injected tools
 

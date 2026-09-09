@@ -77,6 +77,7 @@ cargo clippy -p omnia --no-default-features --features cli --all-targets -- -D w
 cargo clippy -p omnia-guest --no-default-features --features command --all-targets -- -D warnings
 cargo clippy -p omnia-guest --no-default-features --features http --all-targets -- -D warnings
 cargo clippy -p omnia-guest --no-default-features --features command,http --all-targets -- -D warnings
+cargo clippy -p omnia-guest --no-default-features --features schema --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features jit --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features otlp --all-targets -- -D warnings
 cargo clippy -p omnia --no-default-features --features plugin --all-targets -- -D warnings

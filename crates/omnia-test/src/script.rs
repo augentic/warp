@@ -237,6 +237,8 @@ pub struct Seen {
     pub temperature: Option<f32>,
     /// The workspace lent to the model, if any.
     pub workspace: Option<String>,
+    /// Whether the request asked the guest to `check` each candidate.
+    pub check: bool,
 }
 
 // The temperature is a sampling control copied from the request; NaN is
@@ -263,9 +265,11 @@ pub enum SeenFormat {
 /// One tool call a scripted model drove, and the outcome the code under test
 /// answered with.
 ///
-/// The host `ScriptedModel` also records the workspace operations it drives
-/// under the host-injected tool names `read`, `write`, and `list`, with the
-/// path as `arguments`.
+/// Both doubles record a `check` round under the reserved name `check`,
+/// with the candidate as `arguments` and the correction as the `Err`
+/// outcome. The host `ScriptedModel` also records the workspace operations
+/// it drives under the host-injected tool names `read`, `write`, and
+/// `list`, with the path as `arguments`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Exchange {
     /// Tool name.

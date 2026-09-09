@@ -3,8 +3,7 @@
 # The `model` guest imports `omnia:model/completion` and calls `create`.
 # The host serves it with an example-local backend (runtime.rs answers every
 # completion with a fixed schema answer), so `create` returns a
-# deterministic, validated answer with no live model, no network, and no
-# configuration.
+# deterministic answer with no live model, no network, and no configuration.
 #
 # The `[[mount]]` preopens the repository root into every guest sandbox as a
 # read-only workspace named `.`. The `model` guest reads it via

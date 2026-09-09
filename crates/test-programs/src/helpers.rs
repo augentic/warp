@@ -1,15 +1,41 @@
 //! Shared helpers for the guest scenario programs in `programs/<capability>/`.
 
 use omnia_guest::model::{Function, Message, Role, Tool};
+use omnia_guest::schemars::JsonSchema;
 use omnia_wasi_model::completion;
+use serde::Deserialize;
 
 /// The `verdict` JSON Schema several scenarios request.
 pub const VERDICT_SCHEMA: &str =
     r#"{"type":"object","properties":{"verdict":{"type":"string"}},"required":["verdict"]}"#;
 
-/// A `report` JSON Schema whose nested property pins schema error paths.
-pub const REPORT_SCHEMA: &str =
-    r#"{"type":"object","properties":{"ui-surface":{"type":"object"}}}"#;
+/// The typed answer the `check_*` scenarios ask for.
+#[derive(Debug, Deserialize, JsonSchema, PartialEq, Eq)]
+#[schemars(crate = "omnia_guest::schemars")]
+pub struct Verdict {
+    /// `pass` or `fail`.
+    pub verdict: String,
+    /// What was wrong, when `fail`.
+    pub findings: Vec<String>,
+}
+
+impl Verdict {
+    /// The check every `check_*` scenario applies: a `pass` with no findings.
+    ///
+    /// # Errors
+    ///
+    /// Returns the findings a candidate must resolve.
+    pub fn passing(&self) -> Result<(), Vec<String>> {
+        let mut findings = Vec::new();
+        if self.verdict != "pass" {
+            findings.push("verdict must be `pass`".to_owned());
+        }
+        if !self.findings.is_empty() {
+            findings.push("findings must be empty".to_owned());
+        }
+        if findings.is_empty() { Ok(()) } else { Err(findings) }
+    }
+}
 
 /// One user chat turn.
 #[must_use]
@@ -55,5 +81,6 @@ pub fn raw_request(
         format: completion::Format::Text,
         tools: tools.into_iter().map(completion::Tool::Function).collect(),
         grants,
+        check: false,
     }
 }

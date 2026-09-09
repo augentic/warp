@@ -5,7 +5,7 @@
 //! that the `create` binding assembles from the store's mounts and the
 //! session channels it mints for the completion.
 
-mod candidate;
+mod answer;
 mod completion_impl;
 mod default_impl;
 mod request;
@@ -41,7 +41,7 @@ pub use omnia_core::FutureResult;
 use omnia_core::{HasMounts, Host, Server, StoreView};
 use wasmtime::component::{HasData, Linker};
 
-pub use self::candidate::{Answer, ToolTurn, Transcript, Usage};
+pub use self::answer::{Answer, ToolTurn, Transcript, Usage};
 pub use self::default_impl::ModelDefault;
 use self::generated::omnia::model::completion;
 pub use self::generated::omnia::model::completion::{

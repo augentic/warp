@@ -519,7 +519,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scanned_programs_are_named_group_scenario_and_sorted() {
+    fn scanned_programs() {
         let programs = programs_from(
             "programs",
             [
@@ -555,7 +555,7 @@ mod tests {
     // A package's crate name is the artifact stem and macro arm, the group
     // prefixes only the constant, and the build is told the package name.
     #[test]
-    fn package_programs_carry_the_group_in_the_constant_only() {
+    fn package_constants() {
         let programs =
             package_programs("source", vec!["typescript".to_owned(), "gtfs-adapter".to_owned()]);
         assert_eq!(
@@ -580,7 +580,7 @@ mod tests {
     // Examples are uplifted under `debug/examples/`; packages and extras sit
     // in the profile directory itself.
     #[test]
-    fn artifacts_follow_cargos_uplift_layout() {
+    fn artifact_layout() {
         let program = |name: &str, group: &str| Program {
             name: name.into(),
             constant: name.to_uppercase(),
@@ -605,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_records_its_configuration() {
+    fn builder_config() {
         let components = Components::in_workspace("../..")
             .package("test-programs")
             .scan("crates/test-programs/programs")

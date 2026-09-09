@@ -51,7 +51,7 @@ mod production_plugins {
 }
 
 #[tokio::test]
-async fn runtime_overlay_drives_the_production_wiring() {
+async fn runtime_overlay() {
     // The generated `main` and `run` stay untouched; the overlay reaches the
     // same `Hooks` through `run_with`.
     let _ = (production::main, production::run);
@@ -69,7 +69,7 @@ async fn runtime_overlay_drives_the_production_wiring() {
 }
 
 #[tokio::test]
-async fn path_root_rewrites_the_production_location() {
+async fn path_root() {
     let _ = (production_plugins::main, production_plugins::run);
     let scratch = scratch();
     std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
@@ -92,7 +92,7 @@ async fn path_root_rewrites_the_production_location() {
 }
 
 #[tokio::test]
-async fn scripted_model_answers_a_guest_completion() {
+async fn scripted_model() {
     let backends = Backends::defaults().await.model(ScriptedModel::answering(["second"]));
     let status = Deployment::new()
         .guest("echo", test_programs::MODEL_ECHO_TEXT)
@@ -111,7 +111,7 @@ async fn scripted_model_answers_a_guest_completion() {
 }
 
 #[tokio::test]
-async fn scripted_calls_drive_the_guest_tool_handler() {
+async fn scripted_calls() {
     let model = ScriptedModel::answering(["42"]).calling(0, [("lookup", "{}")]);
     let backends = Backends::defaults().await.model(model);
     let status = Deployment::new()
@@ -134,7 +134,7 @@ async fn scripted_calls_drive_the_guest_tool_handler() {
 }
 
 #[tokio::test]
-async fn exhausted_script_fails_the_guest_not_the_test() {
+async fn exhausted_script() {
     let backends = Backends::defaults().await.model(ScriptedModel::default());
     let outcome = Deployment::new()
         .guest("echo", test_programs::MODEL_ECHO_TEXT)
@@ -149,7 +149,7 @@ async fn exhausted_script_fails_the_guest_not_the_test() {
 }
 
 #[tokio::test]
-async fn then_answers_past_the_script() {
+async fn then_answers() {
     let model = ScriptedModel::answering::<String>([]).then(|| "second".to_owned());
     let backends = Backends::defaults().await.model(model);
     let status = Deployment::new()
@@ -161,7 +161,7 @@ async fn then_answers_past_the_script() {
 }
 
 #[tokio::test]
-async fn link_pair_dispatches_through_the_booted_runtime() {
+async fn link_pair() {
     let runtime = Deployment::new()
         .link(["omnia-test:link/ops"])
         .guest("echoer", test_programs::LINK_ECHOER)
@@ -176,7 +176,7 @@ async fn link_pair_dispatches_through_the_booted_runtime() {
 }
 
 #[tokio::test]
-async fn path_root_serves_plugin_loads() {
+async fn path_root_plugins() {
     let scratch = scratch();
     std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
         .expect("staging the loadable echoer");
@@ -207,7 +207,7 @@ async fn config_seeded() {
 }
 
 #[tokio::test]
-async fn readers_see_writes_through_the_host_handles() {
+async fn host_handles() {
     let backends = Backends::defaults().await;
     let bucket = backends.keyvalue.open_bucket("cache".to_owned()).await.expect("bucket");
     bucket.set("k".to_owned(), b"v".to_vec()).await.expect("set");
@@ -221,7 +221,7 @@ async fn readers_see_writes_through_the_host_handles() {
 }
 
 #[test]
-fn scratch_writes_and_mounts() {
+fn scratch_mounts() {
     let scratch = scratch();
     scratch.write("nested/file.txt", "hello");
     assert_eq!(scratch.read("nested/file.txt"), Some(b"hello".to_vec()));

@@ -103,7 +103,7 @@ async fn invoke() {
 }
 
 #[tokio::test]
-async fn invoke_with_direct_context() {
+async fn invoke_direct() {
     let context = Context::new("tenant", (), Metadata::default());
 
     let output = echo(
@@ -265,7 +265,7 @@ async fn unregistered_method() {
 }
 
 #[tokio::test]
-async fn route_state_clones_share_provider() {
+async fn route_state_clones() {
     let observe = |input: ObserveInput, context: Context<StatefulProvider>| {
         ready(Ok::<_, omnia_guest::Error>(ProviderObservation {
             name: input.name,
@@ -321,7 +321,7 @@ struct Welcome {
 }
 
 #[tokio::test]
-async fn closure_handler_with_configuration() {
+async fn closure_handler() {
     let greeting = "welcome".to_string();
     let router = axum::Router::new()
         .route(
@@ -644,7 +644,7 @@ fn render_summary(summary: &Summary, out: &mut dyn std::fmt::Write) -> std::fmt:
 }
 
 #[test]
-fn format_encode_text_and_json() {
+fn format_encode() {
     let summary = Summary {
         name: "widget".to_string(),
         count: 3,
@@ -712,7 +712,7 @@ fn is_minted_id(id: &str) -> bool {
 }
 
 #[tokio::test]
-async fn missing_request_id_is_minted() {
+async fn missing_request_id() {
     let request = Request::builder()
         .method(Method::GET)
         .uri("/echo?name=plan")
@@ -726,7 +726,7 @@ async fn missing_request_id_is_minted() {
 }
 
 #[test]
-fn from_lookup_mints_distinct_request_ids() {
+fn from_lookup_mints() {
     let first = Metadata::from_lookup(|_| None);
     let second = Metadata::from_lookup(|_| None);
 
@@ -739,7 +739,7 @@ fn from_lookup_mints_distinct_request_ids() {
 }
 
 #[test]
-fn from_lookup_reads_every_id() {
+fn from_lookup_reads() {
     let metadata = Metadata::from_lookup(|name| match name {
         "request-id" => Some("req-1".to_owned()),
         "correlation-id" => Some("corr-1".to_owned()),
@@ -754,7 +754,7 @@ fn from_lookup_reads_every_id() {
 }
 
 #[test]
-fn from_lookup_correlation_falls_back_to_request_id() {
+fn from_lookup_correlation() {
     let metadata = Metadata::from_lookup(|name| (name == "request-id").then(|| "req-2".to_owned()));
 
     assert_eq!(metadata.request_id.as_deref(), Some("req-2"));
@@ -775,7 +775,7 @@ fn fetch<P: Send + Sync + 'static>(
 }
 
 #[tokio::test]
-async fn decoder_classifies_not_found() {
+async fn decoder_not_found() {
     let router = axum::Router::new()
         .route(
             "/items/{id}",

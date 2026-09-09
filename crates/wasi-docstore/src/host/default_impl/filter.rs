@@ -243,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn is_null_matches_null_and_missing() {
+    fn is_null() {
         let filter = FilterTree::IsNull("parent".to_string());
         assert!(matches(&filter, &json!({"parent": null})));
         assert!(matches(&filter, &json!({})), "absent field reads as null");

@@ -65,15 +65,14 @@ The closure's `Err` is model-visible failure text the model may repair from; har
 
 The type a guest wants back cannot cross the WIT boundary, but a callback can. A request built with `.check(true)` asks the backend to offer every candidate answer to the guest before finishing: the candidate arrives at the `complete_with` handler as a `ToolCall` named `check` whose `arguments` are the candidate text. Returning `Ok` accepts it as the reply; returning `Err(text)` sends `text` back verbatim as the correction turn and the backend goes round again (bounded by its own round budget — a final rejection surfaces as `Error::BudgetExhausted` carrying the guest's last correction). The check needs no declaration in `tools` and does not count against the tool-call budget.
 
-With the `schema` feature, `omnia_guest::model::Question<T>` runs that exchange for a typed answer. `T` derives `Deserialize` and `JsonSchema` (against the re-exported `omnia_guest::schemars`); the question steers the provider with `T`'s schema, deserializes each candidate, hands it to the guest's closure, and returns the accepted `T`:
+`omnia_guest::model::Question<T>` runs that exchange for a typed answer. `T` derives `Deserialize` and `JsonSchema` (the guest depends on `schemars` 1.x, the version `omnia-guest` builds against); the question steers the provider with `T`'s schema, deserializes each candidate, hands it to the guest's closure, and returns the accepted `T`:
 
 ```rust,noplayground
 use omnia_guest::model::{Question, WasiModel};
-use omnia_guest::schemars::JsonSchema;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 #[derive(Deserialize, JsonSchema)]
-#[schemars(crate = "omnia_guest::schemars")]
 struct Verdict {
     verdict: String,
     findings: Vec<String>,
@@ -91,7 +90,7 @@ let verdict = Question::<Verdict>::new("verdict")
     .await?;
 ```
 
-The closure's `Err(findings)` becomes the correction turn (one `## Previous answer (rejected)` / `## Findings` template); a candidate that does not deserialize as `T` is corrected the same way, and a completion that ends without an accepted answer after such a mismatch is `Error::InvalidRequest` — the schema and the type disagree, which more rounds would not fix. `Question::tools(..)` declares function tools and `ask`'s `tools` argument handles them; `Question::schema(|schema| ..)` post-processes the steering schema (enums, counts, patterns) without touching `T`.
+The closure's `Err(findings)` becomes the correction turn (one `## Previous answer (rejected)` / `## Findings` template by default; `Question::correction(|previous, findings| ..)` renders it differently for one question); a candidate that does not deserialize as `T` is corrected the same way, and a completion that ends without an accepted answer after such a mismatch is `Error::InvalidRequest` — the schema and the type disagree, which more rounds would not fix. `Question::tools(..)` declares function tools and `ask`'s `tools` argument handles them; `Question::schema(|schema| ..)` post-processes the steering schema (enums, counts, patterns) without touching `T`.
 
 ## Grants and host-injected tools
 

@@ -130,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_mount_bare_path_shorthand() {
+    fn parse_mount_path() {
         let entry: MountArg = "workspace".parse().expect("bare path parses");
         assert_eq!(entry.host_path, PathBuf::from("workspace"));
         assert_eq!(entry.name, ".", "name defaults to `.`");
@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_mount_bare_writable_shorthand() {
+    fn parse_mount_writable() {
         let entry: MountArg = "workspace,writable".parse().expect("shorthand parses");
         assert_eq!(entry.host_path, PathBuf::from("workspace"));
         assert!(entry.writable);
@@ -150,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_mount_rejects_unknown_key() {
+    fn parse_mount_unknown() {
         assert!("path=x,bogus=1".parse::<MountArg>().is_err(), "unknown keys are rejected");
     }
 }

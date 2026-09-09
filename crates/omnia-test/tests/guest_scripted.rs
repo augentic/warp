@@ -32,7 +32,7 @@ fn digest(fill: &str) -> Digest {
 }
 
 #[tokio::test]
-async fn answers_in_order_and_records_requests() {
+async fn answers_in_order() {
     let model = Scripted::answering(["first", "second"]);
     assert_eq!(model.complete(user("a")).await.expect("reply").answer, "first");
     assert_eq!(model.complete(user("b")).await.expect("reply").answer, "second");
@@ -46,13 +46,13 @@ async fn answers_in_order_and_records_requests() {
 }
 
 #[tokio::test]
-async fn scripted_failures_return_typed_errors() {
+async fn scripted_failures() {
     let model = Scripted::new([Err(Error::BudgetExhausted("cap".into()))]);
     assert_eq!(model.complete(user("a")).await, Err(Error::BudgetExhausted("cap".into())));
 }
 
 #[tokio::test]
-async fn complete_with_drives_scripted_calls_and_records_exchanges() {
+async fn complete_with_calls() {
     let model = Scripted::answering(["done"])
         .calling(0, [call("lookup", r#"{"id":1}"#), call("write", "{}")]);
 
@@ -102,7 +102,7 @@ async fn judge(call: ToolCall) -> Result<String, String> {
 }
 
 #[tokio::test]
-async fn check_accepts_first_candidate() {
+async fn check_accepts() {
     let model = Scripted::answering(["ok"]);
     let reply = model.complete_with(checked("go"), judge).await.expect("reply");
     assert_eq!(reply.answer, "ok");
@@ -118,7 +118,7 @@ async fn check_accepts_first_candidate() {
 }
 
 #[tokio::test]
-async fn check_corrects_then_accepts() {
+async fn check_corrects() {
     let model = Scripted::answering(["bad", "ok"]);
     let reply = model.complete_with(checked("go"), judge).await.expect("reply");
     assert_eq!(reply.answer, "ok");
@@ -131,7 +131,7 @@ async fn check_corrects_then_accepts() {
 }
 
 #[tokio::test]
-async fn check_exhausts_on_the_last_rejection() {
+async fn check_exhausts() {
     let model = Scripted::answering(["bad", "worse"]);
     let error = model.complete_with(checked("go"), judge).await.expect_err("never accepted");
     assert_eq!(error, Error::BudgetExhausted("no: worse".into()));
@@ -139,7 +139,7 @@ async fn check_exhausts_on_the_last_rejection() {
 }
 
 #[tokio::test]
-async fn check_skips_a_failed_turn() {
+async fn check_skips_failed() {
     let model = Scripted::new([Err(Error::Backend("offline".into()))]);
     let error = model.complete_with(checked("go"), judge).await.expect_err("backend failed");
     assert_eq!(error, Error::Backend("offline".into()));
@@ -147,35 +147,35 @@ async fn check_skips_a_failed_turn() {
 }
 
 #[test]
-fn complete_rejects_a_check_request() {
+fn complete_rejects_check() {
     let model = Scripted::default();
     let result = catch_unwind(AssertUnwindSafe(|| drop(model.complete(checked("a")))));
     assert!(result.is_err(), "complete must refuse a check request");
 }
 
 #[tokio::test]
-async fn complete_rejects_a_turn_with_scripted_calls() {
+async fn complete_rejects_calls() {
     let model = Scripted::answering(["x"]).calling(0, [call("t", "{}")]);
     let result = catch_unwind(AssertUnwindSafe(|| model.complete(user("a"))));
     assert!(result.is_err(), "complete must refuse scripted tool calls");
 }
 
 #[tokio::test]
-async fn then_answers_past_the_script() {
+async fn then_answers() {
     let model = Scripted::answering(["one"]).then(|| Err(Error::Backend("offline".into())));
     assert_eq!(model.complete(user("a")).await.expect("reply").answer, "one");
     assert_eq!(model.complete(user("b")).await, Err(Error::Backend("offline".into())));
 }
 
 #[test]
-fn unscripted_completion_panics() {
+fn unscripted() {
     let model = Scripted::default();
     let result = catch_unwind(AssertUnwindSafe(|| drop(model.complete(user("a")))));
     assert!(result.is_err(), "an empty script panics on first use");
 }
 
 #[tokio::test]
-async fn seen_projects_format_tools_and_workspace() {
+async fn seen() {
     let model = Scripted::answering(["{}"]);
     let request = Request::builder()
         .system("be terse")
@@ -207,7 +207,7 @@ async fn seen_projects_format_tools_and_workspace() {
 }
 
 #[tokio::test]
-async fn loader_resolves_scripted_digest_and_records_loads() {
+async fn loader_digest() {
     let loader = ScriptedLoader::default().digest("acme:tool", digest("ab"));
     let plugin = loader
         .load(&PluginRef::builder().package("acme:tool").location(Location::Registry(None)).build())
@@ -219,7 +219,7 @@ async fn loader_resolves_scripted_digest_and_records_loads() {
 }
 
 #[tokio::test]
-async fn loader_honours_the_request_pin_when_unscripted() {
+async fn loader_request_pin() {
     let loader = ScriptedLoader::default();
     let pinned = PluginRef::builder()
         .package("acme:tool")
@@ -237,7 +237,7 @@ async fn loader_honours_the_request_pin_when_unscripted() {
 }
 
 #[tokio::test]
-async fn loader_refuses_a_disagreeing_pin() {
+async fn loader_disagreeing_pin() {
     let loader = ScriptedLoader::default().digest("acme:tool", digest("ab"));
     let pinned = PluginRef::builder()
         .package("acme:tool")
@@ -257,7 +257,7 @@ async fn loader_refuses_a_disagreeing_pin() {
 // its own still wins; a pin disagreeing with a scripted digest is still
 // refused rather than falling through to the default.
 #[tokio::test]
-async fn loader_defaulting_fills_unscripted_unpinned_loads() {
+async fn loader_defaulting() {
     let loader =
         ScriptedLoader::default().digest("acme:tool", digest("ab")).defaulting(digest("ef"));
 

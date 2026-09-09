@@ -116,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn conditional_sets_only_bind_present_values() {
+    fn conditional_sets() {
         // The optional-PATCH-field pattern: absent fields add no SET clause.
         let name: Option<&str> = Some("Britomart");
         let timezone: Option<&str> = None;
@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_missing_set_or_filter() {
+    fn missing_set_or_filter() {
         assert!(UpdateBuilder::<Stop>::new().r#where(Filter::eq("stop_id", 7)).build().is_err());
         assert!(UpdateBuilder::<Stop>::new().set("name", "x").build().is_err());
     }

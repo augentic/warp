@@ -101,7 +101,7 @@ mod tests {
     use super::{Example, Sections};
 
     #[test]
-    fn assemble_substitutes_and_joins() {
+    fn assemble_sections() {
         let sections = Sections {
             role: Some("a {language} reviewer".to_owned()),
             task: "review the {language} code".to_owned(),

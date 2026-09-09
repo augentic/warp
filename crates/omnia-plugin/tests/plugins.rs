@@ -218,7 +218,7 @@ mod locations_grammar {
 }
 
 #[test]
-fn locations_grammar_carries_manifest_data() {
+fn locations_grammar() {
     // Touch the generated entry points so the compile-only module above is
     // reachable for dead-code analysis.
     let _ = (locations_grammar::main, locations_grammar::run, locations_grammar::run_with::<()>);
@@ -369,7 +369,7 @@ fn custom_section(payload: &[u8]) -> Vec<u8> {
 // deregistered package's digest record must not survive into the next load —
 // the re-load binds the freshly staged bytes, and a stale pin refuses.
 #[tokio::test]
-async fn reload_after_deregister_binds_fresh_bytes() {
+async fn reload_after_deregister() {
     let scratch = scratch();
     std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
         .expect("staging the loadable echoer");
@@ -414,7 +414,7 @@ async fn reload_after_deregister_binds_fresh_bytes() {
 // stale attestation behind: a pinned re-load must refuse rather than answer
 // with the old digest over the new bytes.
 #[tokio::test]
-async fn pinned_reload_refuses_after_external_reregistration() {
+async fn pinned_reload_reregister() {
     let scratch = scratch();
     std::fs::copy(test_programs::LINK_ECHOER, scratch.path().join("plugin.wasm"))
         .expect("staging the loadable echoer");
@@ -451,7 +451,7 @@ async fn pinned_reload_refuses_after_external_reregistration() {
 // A deployment that links the loader host but never installs the `Plugins`
 // extension refuses every load as loader misconfiguration.
 #[tokio::test]
-async fn load_without_plugins_installed_refuses() {
+async fn load_without_plugins() {
     let scratch = scratch();
     let manifest = Manifest::new()
         .link(["omnia-test:link/ops"])

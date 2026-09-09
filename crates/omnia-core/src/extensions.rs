@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn clones_share_the_set() {
+    fn clones_share_set() {
         let extensions = Extensions::new();
         let handle = extensions.clone();
         assert!(extensions.insert("shared".to_owned()));

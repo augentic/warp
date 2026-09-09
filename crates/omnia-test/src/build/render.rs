@@ -104,7 +104,7 @@ mod tests {
     // A package constant carries its group; an ungrouped extra has a
     // constant and no `foreach_` arm.
     #[test]
-    fn gen_package_constants_and_ungrouped_extras() {
+    fn gen_package_constants() {
         let intent = Program {
             name: "intent".into(),
             constant: "SOURCE_INTENT".into(),
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn gen_constants_then_one_macro_per_group() {
+    fn gen_macros() {
         let programs = [
             program("link_echo", "link", "programs/link/echo.rs"),
             program("model_echo_text", "model", "programs/model/echo_text.rs"),
@@ -179,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn gen_quotes_paths_with_backslashes() {
+    fn gen_quotes_paths() {
         let programs = [program("adapter", "examples", "examples/adapter/main.rs")];
         let artifacts = [Artifact {
             program: &programs[0],
@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn examples_replace_everything_after_the_marker() {
+    fn examples_replace() {
         let marker = "# Generated\n";
         let current = "[package]\nname = \"p\"\n\n# Generated\n\n[[example]]\nname = \"stale\"\n";
         let programs = [
@@ -209,12 +209,12 @@ mod tests {
     }
 
     #[test]
-    fn examples_without_the_marker() {
+    fn examples_without_marker() {
         assert!(refresh_examples("[package]\n", "# Generated\n", &[]).is_none());
     }
 
     #[test]
-    fn dep_info_unescapes_spaces_and_skips_phony_lines() {
+    fn dep_info() {
         let contents = "/out/a.wasm: /src/lib.rs /my\\ dir/with\\ space.rs /src/b.rs\n\n\
                         /src/lib.rs:\n/src/b.rs:\n";
         assert_eq!(dep_info_paths(contents), ["/src/lib.rs", "/my dir/with space.rs", "/src/b.rs"]);

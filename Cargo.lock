@@ -3829,6 +3829,7 @@ dependencies = [
  "omnia-test",
  "omnia-wasi-model",
  "omnia-wasi-otel",
+ "schemars",
  "serde",
  "tracing",
  "wasip3",

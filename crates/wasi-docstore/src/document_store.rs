@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn on_date_expands_to_day_range() {
+    fn on_date_day_range() {
         let Filter::And(children) = Filter::on_date("updated", "2026-03-19").unwrap() else {
             panic!("expected And");
         };
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn on_date_rolls_over_month_end() {
+    fn on_date_month_end() {
         let Filter::And(children) = Filter::on_date("updated", "2026-12-31").unwrap() else {
             panic!("expected And");
         };
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn on_date_rejects_invalid_date() {
+    fn on_date_invalid() {
         Filter::on_date("updated", "2026-13-01").unwrap_err();
         Filter::on_date("updated", "not-a-date").unwrap_err();
     }

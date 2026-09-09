@@ -1,14 +1,13 @@
 //! `Question<T>` over a scripted model: the guest judges each candidate.
 
-#![cfg(all(not(target_arch = "wasm32"), feature = "schema"))]
+#![cfg(not(target_arch = "wasm32"))]
 
 use omnia_guest::model::{Error, Question, ToolCall, Tools};
-use omnia_guest::schemars::JsonSchema;
 use omnia_test::guest::Scripted;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema, PartialEq)]
-#[schemars(crate = "omnia_guest::schemars")]
 struct Verdict {
     verdict: String,
     findings: Vec<String>,
@@ -62,6 +61,20 @@ async fn corrected() {
 }
 
 #[tokio::test]
+async fn own_correction_template() {
+    let model = Scripted::answering([
+        r#"{"verdict":"fail","findings":[]}"#,
+        r#"{"verdict":"pass","findings":[]}"#,
+    ]);
+    let question = question()
+        .correction(|previous, findings| format!("REJECTED {previous}: {}", findings.join("; ")));
+    question.ask(&model, "judge this", None, strict).await.expect("a verdict");
+
+    let correction = model.exchanges()[0].outcome.clone().expect_err("rejected");
+    assert_eq!(correction, r#"REJECTED {"verdict":"fail","findings":[]}: verdict must be `pass`"#);
+}
+
+#[tokio::test]
 async fn exhausted() {
     let model = Scripted::answering([r#"{"verdict":"fail","findings":[]}"#]);
     let error = question().ask(&model, "judge this", None, strict).await.expect_err("rejected");
@@ -84,7 +97,7 @@ async fn mismatch() {
 }
 
 #[tokio::test]
-async fn mismatch_then_accepted_is_the_models_miss() {
+async fn mismatch_then_accepted() {
     let model = Scripted::answering([r#"{"other":1}"#, r#"{"verdict":"pass","findings":[]}"#]);
     let verdict = question().ask(&model, "judge this", None, strict).await.expect("a verdict");
     assert_eq!(verdict.verdict, "pass");
@@ -96,11 +109,26 @@ async fn unchecked_backend() {
     let model = Unchecked(Scripted::answering([r#"{"verdict":"pass","findings":[]}"#]));
     let error =
         question().ask(&model, "judge this", None, strict).await.expect_err("no accepted answer");
-    assert!(matches!(error, Error::Backend(_)), "{error:?}");
+    let Error::Backend(detail) = error else {
+        panic!("expected backend, got {error:?}");
+    };
+    assert_eq!(detail, "the backend finished without running the check");
 }
 
 #[tokio::test]
-async fn other_tools_reach_the_callers_handler() {
+async fn heedless_backend() {
+    // A backend that runs the check but finishes on the rejected candidate.
+    let model = Heedless(r#"{"verdict":"fail","findings":[]}"#);
+    let error =
+        question().ask(&model, "judge this", None, strict).await.expect_err("no accepted answer");
+    let Error::Backend(detail) = error else {
+        panic!("expected backend, got {error:?}");
+    };
+    assert_eq!(detail, "the backend finished on a candidate the check rejected");
+}
+
+#[tokio::test]
+async fn other_tools() {
     let model = Scripted::answering([r#"{"verdict":"pass","findings":[]}"#]).calling(
         0,
         [ToolCall {
@@ -120,7 +148,7 @@ async fn other_tools_reach_the_callers_handler() {
 }
 
 #[tokio::test]
-async fn no_tools_refuses_a_tool_call() {
+async fn refuse_tool_call() {
     let model = Scripted::answering([r#"{"verdict":"pass","findings":[]}"#]).calling(
         0,
         [ToolCall {
@@ -158,5 +186,43 @@ impl omnia_guest::Model for Unchecked {
             },
             handler,
         )
+    }
+}
+
+/// A model that offers one candidate to `check` and replies with it whatever
+/// the verdict: a backend that ignores the rejection.
+struct Heedless(&'static str);
+
+impl omnia_guest::Model for Heedless {
+    fn complete(
+        &self, _request: omnia_guest::model::Request,
+    ) -> impl Future<Output = Result<omnia_guest::model::Reply, Error>> + Send {
+        std::future::ready(Ok(self.reply()))
+    }
+
+    async fn complete_with<H, F>(
+        &self, _request: omnia_guest::model::Request, mut handler: H,
+    ) -> Result<omnia_guest::model::Reply, Error>
+    where
+        H: FnMut(ToolCall) -> F + Send,
+        F: Future<Output = Result<String, String>> + Send,
+    {
+        let verdict = handler(ToolCall {
+            id: "check-1".into(),
+            name: "check".into(),
+            arguments: self.0.into(),
+        })
+        .await;
+        assert!(verdict.is_err(), "the scenario's candidate is one the check rejects");
+        Ok(self.reply())
+    }
+}
+
+impl Heedless {
+    fn reply(&self) -> omnia_guest::model::Reply {
+        omnia_guest::model::Reply {
+            answer: self.0.to_owned(),
+            usage: None,
+        }
     }
 }

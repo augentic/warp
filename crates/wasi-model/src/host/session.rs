@@ -46,7 +46,8 @@ pub struct ToolSession {
 pub struct Limits {
     /// Tool calls one completion may issue before `budget-exhausted`.
     pub max_tool_calls: u32,
-    /// Byte cap on a single tool result's output.
+    /// Byte cap on a single tool result's output, and on a `check`'s
+    /// correction text.
     pub max_result_bytes: usize,
     /// How long the host waits for the guest to answer one tool call.
     pub tool_timeout: Duration,
@@ -138,6 +139,11 @@ impl ToolSession {
         async move {
             let pending = self.reserve(CHECK_TOOL, false)?;
             let output = self.exchange(pending, CHECK_TOOL, candidate).await?;
+            // The correction is what reaches the model here; the same cap
+            // that bounds a tool result bounds it.
+            if let Err(correction) = &output {
+                self.cap(CHECK_TOOL, correction)?;
+            }
             Ok(output.map(drop))
         }
         .boxed()
@@ -208,16 +214,22 @@ impl ToolSession {
     }
 
     fn check_result(&self, name: &str, output: ToolOutcome) -> anyhow::Result<ToolOutcome> {
-        if let Ok(text) = &output
-            && text.len() > self.limits.max_result_bytes
-        {
+        if let Ok(text) = &output {
+            self.cap(name, text)?;
+        }
+        Ok(output)
+    }
+
+    // Fail hard when `text`, bound for the model, exceeds the result cap.
+    fn cap(&self, name: &str, text: &str) -> anyhow::Result<()> {
+        if text.len() > self.limits.max_result_bytes {
             return Err(self.fail(Error::ToolFailed(format!(
                 "tool `{name}` result of {} bytes exceeds the {}-byte cap",
                 text.len(),
                 self.limits.max_result_bytes
             ))));
         }
-        Ok(output)
+        Ok(())
     }
 
     // Deliver one guest result to its pending call. Unknown ids (stale after

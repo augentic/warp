@@ -116,7 +116,7 @@ The guest crate exposes trait-based abstractions for host capabilities. When com
 | `Plugins` | Request plugin loads through `omnia:plugins/loader`: name a package, a location, and an optional sha256 pin; receive a typed `Plugin` handle. The `plugins` module carries the shared `PluginRef`/`Digest` types, typed refusals convertible into `Error`, and `PluginCache` for ensure-once loads. |
 | `BlobStore` / `BlobStoreExt` | Object storage. `BlobStore` is the ten primitives an implementor writes; `BlobStoreExt` (`has`, `delete_objects`, `clear`, `copy_object`, `move_object`) is derived for every `BlobStore` — one host call each on `wasm32`, composed from the primitives natively. |
 | `DocumentStore` | Document CRUD and filtered queries. |
-| `Model` | Prompt completions, with tool calls answered by a guest closure. A request with `check` set has the guest judge each candidate answer (`Ok` accepts, `Err(text)` is the correction the backend sends back to the model); with the `schema` feature, `model::Question<T>` runs that exchange for a `Deserialize + JsonSchema` answer type and returns the accepted `T`. |
+| `Model` | Prompt completions, with tool calls answered by a guest closure. A request with `check` set has the guest judge each candidate answer (`Ok` accepts, `Err(text)` is the correction the backend sends back to the model); `model::Question<T>` runs that exchange for a `Deserialize + JsonSchema` answer type and returns the accepted `T`. |
 
 Every trait is also implemented for `Arc<T>`, `&T`, and `Box<T>` where `T` implements it, so a capability may sit behind a shared handle and still satisfy a `P: Capability` bound.
 
@@ -161,7 +161,6 @@ See the [workspace documentation](https://github.com/augentic/omnia) for the ful
 - `orm` *(default)*: the SQL ORM, table/document capabilities, and document-store re-exports.
 - `http` *(default)*: the axum-backed `api::http` routing, the `mcp` server, and the `HttpError` / `HttpResult` root re-exports. The outbound `HttpRequest` capability and `Error::status()` need no feature.
 - `command`: the clap-backed parts of `api::command` (`parse`, `completions`, `Response::usage`, the `clap_complete::Shell` re-export, and the `clap::ValueEnum` derive on `api::Format`). The `Command` projector, `Response`, `Failure`, and `command!` need no feature.
-- `schema`: the typed model layer — `model::Question<T>`, `SchemaFormat::of::<T>`, `Function::of::<T>` — and the `omnia_guest::schemars` re-export guests derive `JsonSchema` against (`#[schemars(crate = "omnia_guest::schemars")]`) so guest and SDK share one version. `Request::check` and `ToolCall::arguments::<T>()` need no feature.
 
 Guests that do not use SQL, documents, or inbound HTTP can disable defaults to shrink wasm build time and size; a command-only guest is `default-features = false, features = ["command"]`.
 

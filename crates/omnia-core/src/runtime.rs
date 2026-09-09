@@ -549,7 +549,7 @@ mod tests {
     use super::ExitStatus;
 
     #[test]
-    fn code_u8_keeps_low_byte() {
+    fn code_u8_low_byte() {
         // The POSIX low-byte truncation is the only non-trivial ExitStatus logic.
         assert_eq!(ExitStatus::from(256).code_u8(), 0);
         assert_eq!(ExitStatus::from(257).code_u8(), 1);

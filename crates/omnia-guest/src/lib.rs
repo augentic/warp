@@ -18,11 +18,6 @@ pub mod document_store {
 #[cfg(feature = "http")]
 #[doc(hidden)]
 pub use axum;
-/// The `schemars` a guest derives `JsonSchema` against, so the guest and
-/// `model::Question<T>` share one version (derive with
-/// `#[schemars(crate = "omnia_guest::schemars")]`).
-#[cfg(feature = "schema")]
-pub use schemars;
 #[doc(hidden)]
 pub use {anyhow, bytes, http, http_body, tracing};
 #[cfg(target_arch = "wasm32")]

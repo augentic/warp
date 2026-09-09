@@ -1,8 +1,8 @@
 //! Shared helpers for the guest scenario programs in `programs/<capability>/`.
 
 use omnia_guest::model::{Function, Message, Role, Tool};
-use omnia_guest::schemars::JsonSchema;
 use omnia_wasi_model::completion;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 /// The `verdict` JSON Schema several scenarios request.
@@ -11,7 +11,6 @@ pub const VERDICT_SCHEMA: &str =
 
 /// The typed answer the `check_*` scenarios ask for.
 #[derive(Debug, Deserialize, JsonSchema, PartialEq, Eq)]
-#[schemars(crate = "omnia_guest::schemars")]
 pub struct Verdict {
     /// `pass` or `fail`.
     pub verdict: String,

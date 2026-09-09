@@ -54,7 +54,7 @@ fn state_set_get_delete() {
 }
 
 #[test]
-fn cas_conflict_reports_the_observed_value() {
+fn cas_conflict() {
     let memory = Memory::default();
     now(memory.cas("k", None, b"a")).expect("absent key swaps");
     assert_eq!(now(memory.cas("k", None, b"b")), Err(CasError::Conflict(Some(b"a".to_vec()))));
@@ -63,7 +63,7 @@ fn cas_conflict_reports_the_observed_value() {
 }
 
 #[test]
-fn cas_holds_under_racing_writers() {
+fn cas_race() {
     const WRITERS: usize = 8;
     const ROUNDS: u64 = 200;
 
@@ -96,7 +96,7 @@ fn cas_holds_under_racing_writers() {
 }
 
 #[test]
-fn increment_uses_big_endian_i64() {
+fn increment() {
     let memory = Memory::default();
     assert_eq!(now(memory.increment("n", 5)).expect("increment"), 5);
     assert_eq!(now(memory.increment("n", -7)).expect("increment"), -2);
@@ -110,7 +110,7 @@ fn increment_uses_big_endian_i64() {
 // -- Memory: blobs -----------------------------------------------------------
 
 #[test]
-fn objects_round_trip_within_a_container() {
+fn objects() {
     let memory = Memory::default();
     now(memory.create_container("c")).expect("create");
     assert!(now(memory.container_exists("c")).expect("exists"));
@@ -129,7 +129,7 @@ fn objects_round_trip_within_a_container() {
 }
 
 #[test]
-fn get_range_clamps_an_inclusive_end() {
+fn get_range() {
     let memory = Memory::default();
     memory.insert_object("c", "o", b"0123456789");
     assert_eq!(now(memory.get_range("c", "o", 2, 4)).expect("range"), b"234");
@@ -141,7 +141,7 @@ fn get_range_clamps_an_inclusive_end() {
 }
 
 #[test]
-fn info_timestamps_are_monotonic() {
+fn info_timestamps() {
     let memory = Memory::default();
     now(memory.create_container("c")).expect("create");
     now(memory.put("c", "first", b"1")).expect("put");
@@ -167,7 +167,7 @@ fn copy_move_and_clear() {
 }
 
 #[test]
-fn namespaced_scopes_keys_and_containers() {
+fn namespaced() {
     let memory = Memory::default();
     let alpha = Namespaced::new("alpha", memory.clone());
     let beta = Namespaced::new("beta", memory.clone());
@@ -192,7 +192,7 @@ fn bump<P: StateStore>(store: &P) -> i64 {
 }
 
 #[test]
-fn a_shared_handle_satisfies_a_capability_bound() {
+fn shared_handle() {
     let memory = Memory::default();
     let shared = Arc::new(memory.clone());
     assert_eq!(bump(&shared), 1);
@@ -205,7 +205,7 @@ fn a_shared_handle_satisfies_a_capability_bound() {
 // -- MemoryDocs --------------------------------------------------------------
 
 #[test]
-fn documents_insert_put_get_delete() {
+fn documents() {
     let docs = MemoryDocs::default();
     now(docs.insert("people", &doc("1", r#"{"name":"ann"}"#))).expect("insert");
     assert!(now(docs.insert("people", &doc("1", "{}"))).is_err(), "insert is create-only");
@@ -217,7 +217,7 @@ fn documents_insert_put_get_delete() {
 }
 
 #[test]
-fn queries_filter_sort_and_paginate_like_the_default_backend() {
+fn queries() {
     let docs = MemoryDocs::default();
     for (id, age) in [("a", 30), ("b", 20), ("c", 40), ("d", 10)] {
         now(docs.put("people", &doc(id, &format!(r#"{{"age":{age}}}"#)))).expect("put");
@@ -263,7 +263,7 @@ fn queries_filter_sort_and_paginate_like_the_default_backend() {
 // -- ScriptedTables ----------------------------------------------------------
 
 #[test]
-fn tables_answer_by_predicate_and_record_statements() {
+fn tables() {
     let row = Row {
         index: "0".into(),
         fields: vec![Field {
@@ -288,7 +288,7 @@ fn tables_answer_by_predicate_and_record_statements() {
 }
 
 #[test]
-fn unmatched_statement_panics_naming_it() {
+fn unmatched_statement() {
     let tables = ScriptedTables::default();
     let result = catch_unwind(AssertUnwindSafe(|| {
         drop(tables.exec("db".into(), "DROP TABLE t".into(), vec![]));
@@ -301,7 +301,7 @@ fn unmatched_statement_panics_naming_it() {
 // -- MatchedHttp -------------------------------------------------------------
 
 #[test]
-fn http_matches_method_url_and_body() {
+fn http() {
     let http = MatchedHttp::default()
         .on(Method::GET, "https://api.test/ping", Response::new(Bytes::from_static(b"pong")))
         .on_matching(
@@ -328,7 +328,7 @@ fn http_matches_method_url_and_body() {
 }
 
 #[test]
-fn unmatched_request_panics_naming_method_and_url() {
+fn unmatched_request() {
     let http = MatchedHttp::default();
     let request =
         Request::delete("https://api.test/x").body(Full::<Bytes>::default()).expect("request");
@@ -341,7 +341,7 @@ fn unmatched_request_panics_naming_method_and_url() {
 // -- Sink, MapConfig, FixedIdentity -----------------------------------------
 
 #[test]
-fn sink_records_messages_and_broadcasts() {
+fn sink() {
     let sink = Sink::default();
     now(Publish::send(&sink, "orders", &Message::new(b"one"))).expect("send");
     now(Broadcast::send(&sink, "room", b"hello", Some(vec!["s1".into()]))).expect("broadcast");
@@ -356,7 +356,7 @@ fn sink_records_messages_and_broadcasts() {
 }
 
 #[test]
-fn map_config_answers_known_keys_only() {
+fn map_config() {
     let config = MapConfig::default().with([("region", "eu")]);
     assert_eq!(now(config.get("region")).expect("known"), "eu");
     let error = now(config.get("zone")).expect_err("unknown key");
@@ -364,7 +364,7 @@ fn map_config_answers_known_keys_only() {
 }
 
 #[test]
-fn fixed_identity_returns_the_token_and_records_asks() {
+fn fixed_identity() {
     let identity = FixedIdentity::new("tok");
     assert_eq!(now(identity.access_token("svc".into())).expect("token"), "tok");
     assert_eq!(identity.asked(), ["svc"]);
